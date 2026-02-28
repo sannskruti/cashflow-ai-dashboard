@@ -1,4 +1,5 @@
 version: "3.8"
+
 services:
   postgres:
     image: postgres:16
@@ -8,8 +9,9 @@ services:
       POSTGRES_PASSWORD: cashflow
       POSTGRES_DB: cashflow
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - cashflow_pg_data:/var/lib/postgresql/data
+
 volumes:
   cashflow_pg_data:
