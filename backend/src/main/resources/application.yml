@@ -12,3 +12,14 @@ spring:
 
 server:
   port: 8080
+
+ai:
+  provider: openai
+  openai:
+    apiKey: ${OPENAI_API_KEY}
+    model: "gpt-4.1-mini"
+
+logging:
+  level:
+    org.springframework.web.reactive.function.client.ExchangeFunctions: INFO
+    org.springframework.web: INFO
