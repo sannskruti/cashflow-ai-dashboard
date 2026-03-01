@@ -2,8 +2,11 @@ package com.sanskruti.cashflow.cashflow_backend.service;
 import com.sanskruti.cashflow.cashflow_backend.api.dto.SummaryResponse;
 import com.sanskruti.cashflow.cashflow_backend.api.dto.WeeklyPoint;
 import com.sanskruti.cashflow.cashflow_backend.model.Transaction;
+import com.sanskruti.cashflow.cashflow_backend.repository.DatasetRepository;
 import com.sanskruti.cashflow.cashflow_backend.repository.TransactionRepository;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 
 import com.sanskruti.cashflow.cashflow_backend.api.dto.DriverPoint;
@@ -25,9 +28,18 @@ import java.util.stream.Collectors;
 @Service
 public class AnalyticsService {
     private final TransactionRepository transactionRepository;
+    private final DatasetRepository datasetRepository;
 
-    public AnalyticsService(TransactionRepository transactionRepository) {
+    public AnalyticsService(TransactionRepository transactionRepository,
+                            DatasetRepository datasetRepository) {
         this.transactionRepository = transactionRepository;
+        this.datasetRepository = datasetRepository;
+    }
+
+    private void requireDataset(Long datasetId) {
+        if (!datasetRepository.existsById(datasetId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Dataset not found: " + datasetId);
+        }
     }
 
     private double r2(double v) {
@@ -35,6 +47,7 @@ public class AnalyticsService {
     }
 
     public SummaryResponse computeSummary(Long datasetId) {
+        requireDataset(datasetId);
         List<Transaction> txs = transactionRepository.findByDatasetId(datasetId);
 
         double totalIncome = txs.stream()
@@ -65,6 +78,7 @@ public class AnalyticsService {
     }
 
     public List<WeeklyPoint> computeWeeklySeries(Long datasetId) {
+        requireDataset(datasetId);
         List<Transaction> txs = transactionRepository.findByDatasetId(datasetId);
 
         // group by weekStart (Monday)
@@ -102,7 +116,8 @@ public class AnalyticsService {
     }
 
     public List<DriverPoint> topExpenseDrivers(Long datasetId, int limit) {
-    List<Transaction> txs = transactionRepository.findByDatasetId(datasetId);
+        requireDataset(datasetId);
+        List<Transaction> txs = transactionRepository.findByDatasetId(datasetId);
 
     return txs.stream()
             .filter(t -> "EXPENSE".equalsIgnoreCase(t.getType()))
@@ -118,6 +133,7 @@ public class AnalyticsService {
 }
 
 public RiskResponse risk(Long datasetId) {
+    requireDataset(datasetId);
     List<WeeklyPoint> weekly = computeWeeklySeries(datasetId);
     if (weekly.isEmpty()) {
         return new RiskResponse(datasetId, 0, 0, 0, List.of("No data"), List.of());
@@ -154,6 +170,7 @@ public RiskResponse risk(Long datasetId) {
 }
 
 public List<ForecastPoint> forecastWeeklyNet(Long datasetId, int horizonWeeks) {
+    requireDataset(datasetId);
     List<WeeklyPoint> history = computeWeeklySeries(datasetId);
     if (history.isEmpty()) return List.of();
 

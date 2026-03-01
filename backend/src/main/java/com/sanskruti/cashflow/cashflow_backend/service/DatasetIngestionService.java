@@ -28,6 +28,14 @@ public class DatasetIngestionService {
     }
 
     public Long ingestCsv(MultipartFile file, String datasetName) throws Exception {
+        String filename = file.getOriginalFilename();
+        if (filename == null || !filename.toLowerCase().endsWith(".csv")) {
+            throw new IllegalArgumentException("Only CSV files are accepted");
+        }
+        if (file.isEmpty()) {
+            throw new IllegalArgumentException("Uploaded file is empty");
+        }
+
         Dataset dataset = Dataset.builder()
                 .name(datasetName)
                 .uploadedAt(LocalDateTime.now())

@@ -9,6 +9,7 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.server.ResponseStatusException;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 import java.util.Map;
@@ -31,10 +32,6 @@ public class AiInsightsService {
     ) {
         this.objectMapper = objectMapper;
         this.model = model;
-
-        // Optional debug (remove later)
-        System.out.println("OpenAI key present? " + (apiKey != null && !apiKey.isBlank()));
-        System.out.println("OpenAI model = " + model);
 
         this.webClient = WebClient.builder()
                 .baseUrl("https://api.openai.com/v1")
@@ -78,25 +75,48 @@ public class AiInsightsService {
         if (wait > 0) Thread.sleep(wait);
         lastCallTime.set(System.currentTimeMillis());
 
-        // Call OpenAI
+        // Call OpenAI with per-status error handling
         Map<?, ?> resp = webClient.post()
                 .uri("/chat/completions")
                 .bodyValue(body)
                 .retrieve()
-                .onStatus(status -> status.value() == 429, clientResponse -> {
-                    throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
-                            "OpenAI rate limit reached — please wait a moment and try again");
-                })
+                .onStatus(status -> status.value() == 401,
+                        cr -> Mono.error(new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+                                "Invalid OpenAI API key")))
+                .onStatus(status -> status.value() == 429,
+                        cr -> Mono.error(new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+                                "OpenAI rate limit reached — please wait a moment and try again")))
+                .onStatus(status -> status.value() == 400,
+                        cr -> Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                                "OpenAI rejected the request — check model name or prompt")))
+                .onStatus(status -> status.is5xxServerError(),
+                        cr -> Mono.error(new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                                "OpenAI service error — try again later")))
                 .bodyToMono(Map.class)
                 .block();
 
-        // Extract assistant content: choices[0].message.content
+        if (resp == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Empty response from OpenAI");
+        }
+
         List<?> choices = (List<?>) resp.get("choices");
+        if (choices == null || choices.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "OpenAI returned no choices");
+        }
+
         Map<?, ?> c0 = (Map<?, ?>) choices.get(0);
         Map<?, ?> msg = (Map<?, ?>) c0.get("message");
         String content = (String) msg.get("content");
 
-        // Parse JSON into DTO
-        return objectMapper.readValue(content, AiInsightsResponse.class);
+        if (content == null || content.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "OpenAI returned empty content");
+        }
+
+        try {
+            return objectMapper.readValue(content, AiInsightsResponse.class);
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Failed to parse AI response: " + e.getMessage());
+        }
     }
 }
