@@ -9,6 +9,16 @@
 
 ---
 
+## 📸 Screenshots
+
+### Dashboard Overview
+![Dashboard Overview](docs/screenshots/dashboard-overview.png)
+
+### AI Insights Panel
+![AI Insights](docs/screenshots/ai-insights.png)
+
+---
+
 ## 🚀 What It Does
 
 Upload a transactions CSV and instantly get:
