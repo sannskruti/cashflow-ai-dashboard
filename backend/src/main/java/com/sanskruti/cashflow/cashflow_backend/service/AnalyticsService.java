@@ -5,10 +5,20 @@ import com.sanskruti.cashflow.cashflow_backend.model.Transaction;
 import com.sanskruti.cashflow.cashflow_backend.repository.TransactionRepository;
 import org.springframework.stereotype.Service;
 
+
+import com.sanskruti.cashflow.cashflow_backend.api.dto.DriverPoint;
+import com.sanskruti.cashflow.cashflow_backend.api.dto.RiskResponse;
+import java.util.stream.Collectors;
+
+
+
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.util.*;
 import java.util.stream.Collectors;
+
+
+
 
 
 @Service
@@ -89,5 +99,57 @@ public class AnalyticsService {
         }
         return d;
     }
+
+    public List<DriverPoint> topExpenseDrivers(Long datasetId, int limit) {
+    List<Transaction> txs = transactionRepository.findByDatasetId(datasetId);
+
+    return txs.stream()
+            .filter(t -> "EXPENSE".equalsIgnoreCase(t.getType()))
+            .collect(Collectors.groupingBy(
+                    t -> (t.getCategory() == null || t.getCategory().isBlank()) ? "uncategorized" : t.getCategory(),
+                    Collectors.summingDouble(t -> Math.abs(t.getAmount()))
+            ))
+            .entrySet().stream()
+            .sorted((a, b) -> Double.compare(b.getValue(), a.getValue()))
+            .limit(limit)
+            .map(e -> new DriverPoint(e.getKey(), r2(e.getValue())))
+            .toList();
+}
+
+public RiskResponse risk(Long datasetId) {
+    List<WeeklyPoint> weekly = computeWeeklySeries(datasetId);
+    if (weekly.isEmpty()) {
+        return new RiskResponse(datasetId, 0, 0, 0, List.of("No data"), List.of());
+    }
+
+    List<Double> nets = weekly.stream().map(WeeklyPoint::net).toList();
+
+    long negativeWeeks = nets.stream().filter(n -> n < 0).count();
+    double negativeRatio = (double) negativeWeeks / nets.size();
+
+    double mean = nets.stream().mapToDouble(Double::doubleValue).average().orElse(0);
+    double variance = nets.stream().mapToDouble(n -> (n - mean) * (n - mean)).average().orElse(0);
+    double std = Math.sqrt(variance);
+
+    // Simple score components
+    int score = 0;
+    score += (int) Math.round(negativeRatio * 60);                 // up to 60
+    score += (int) Math.min(40, Math.round((std / (Math.abs(mean) + 1)) * 40)); // up to 40
+    score = Math.max(0, Math.min(100, score));
+
+    List<String> reasons = new java.util.ArrayList<>();
+    if (negativeRatio > 0.4) reasons.add("High fraction of weeks with negative net cashflow");
+    if (std > Math.abs(mean) * 1.2) reasons.add("High volatility in weekly net cashflow");
+    if (reasons.isEmpty()) reasons.add("Stable cashflow pattern");
+
+    return new RiskResponse(
+            datasetId,
+            score,
+            r2(negativeRatio),
+            r2(std),
+            reasons,
+            topExpenseDrivers(datasetId, 5)
+    );
+}
     
 }
