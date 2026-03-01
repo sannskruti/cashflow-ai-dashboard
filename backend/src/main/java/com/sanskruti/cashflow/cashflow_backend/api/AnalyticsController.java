@@ -7,10 +7,9 @@ import com.sanskruti.cashflow.cashflow_backend.api.dto.WeeklyPoint;
 import com.sanskruti.cashflow.cashflow_backend.service.AnalyticsService;
 import org.springframework.web.bind.annotation.*;
 
-
 import com.sanskruti.cashflow.cashflow_backend.api.dto.DriverPoint;
 import com.sanskruti.cashflow.cashflow_backend.api.dto.RiskResponse;
-
+import com.sanskruti.cashflow.cashflow_backend.api.dto.ForecastPoint;
 import java.util.List;
 
 @RestController
@@ -40,6 +39,10 @@ public class AnalyticsController {
     @GetMapping("/{id}/risk")
     public RiskResponse risk(@PathVariable Long id) {
     return analyticsService.risk(id);
+    }
+    @GetMapping("/{id}/forecast")
+    public List<ForecastPoint> forecast(@PathVariable Long id, @RequestParam(defaultValue = "12") int horizon) {
+    return analyticsService.forecastWeeklyNet(id, horizon);
     }
     
 }

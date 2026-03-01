@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import com.sanskruti.cashflow.cashflow_backend.api.dto.DriverPoint;
 import com.sanskruti.cashflow.cashflow_backend.api.dto.RiskResponse;
 import java.util.stream.Collectors;
+import com.sanskruti.cashflow.cashflow_backend.api.dto.ForecastPoint;
 
 
 
@@ -150,6 +151,32 @@ public RiskResponse risk(Long datasetId) {
             reasons,
             topExpenseDrivers(datasetId, 5)
     );
+}
+
+public List<ForecastPoint> forecastWeeklyNet(Long datasetId, int horizonWeeks) {
+    List<WeeklyPoint> history = computeWeeklySeries(datasetId);
+    if (history.isEmpty()) return List.of();
+
+    // Use EMA over historical net as baseline
+    double alpha = 0.35; // smoothing factor (0.2-0.4 works well)
+    double ema = history.get(0).net();
+
+    for (int i = 1; i < history.size(); i++) {
+        double net = history.get(i).net();
+        ema = alpha * net + (1 - alpha) * ema;
+    }
+
+    // Forecast future points as flat EMA (simple baseline)
+    // We forecast weekStart as next Mondays after the last historical weekStart
+    java.time.LocalDate lastWeekStart = java.time.LocalDate.parse(history.get(history.size() - 1).weekStart());
+    List<ForecastPoint> out = new java.util.ArrayList<>();
+
+    for (int i = 1; i <= horizonWeeks; i++) {
+        java.time.LocalDate ws = lastWeekStart.plusWeeks(i);
+        out.add(new ForecastPoint(ws.toString(), r2(ema)));
+    }
+
+    return out;
 }
     
 }
