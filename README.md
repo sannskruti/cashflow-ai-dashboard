@@ -2,7 +2,25 @@
 
 AI-first financial intelligence platform that combines deterministic analytics with a grounded RAG + LLM assistant.
 
-## Why this project is AI-engineering focused
+## Problem and solution
+
+### Problem
+Small businesses and finance teams often struggle with cashflow visibility because:
+
+- Transaction data is scattered and hard to interpret quickly.
+- Forecasting and risk assessment are usually manual and inconsistent.
+- Traditional dashboards show metrics but do not answer executive \"why\" and \"what should we do next\" questions.
+- Generic AI chat tools can hallucinate if they are not grounded in business data.
+
+### Solution (this app)
+Cashflow AI Dashboard solves this by combining analytics engineering + applied AI:
+
+- Ingests raw CSV transaction data into a structured dataset.
+- Computes deterministic financial signals (summary, drivers, risk, forecast).
+- Generates grounded AI insights from those computed facts.
+- Provides a RAG chatbot that retrieves relevant context before LLM answering.
+- Exposes supporting points + retrieved context for explainable answers.
+- Adds speech-to-text interaction so users can query insights naturally.
 
 This app is not just "chat over data". It implements a clear AI pipeline:
 
@@ -35,6 +53,7 @@ The assistant answers with retrieved context, not free-form model memory.
 ## Tech stack
 
 ### Backend
+
 - Java 17
 - Spring Boot 4
 - Spring MVC + WebFlux WebClient
@@ -46,6 +65,7 @@ The assistant answers with retrieved context, not free-form model memory.
   - Embeddings (retrieval for RAG)
 
 ### Frontend
+
 - React 19 + TypeScript + Vite
 - MUI v7
 - Recharts
@@ -326,7 +346,7 @@ Frontend URL: `http://localhost:5173`
 
 ## Demo flow
 
-1. Login with demo credentials (`demo@cashflow.ai` / `password123`) unless overridden.
+1. Login with demo credentials (`demo@cashflow.ai` / `password123`) unless overridden (Right now for demo purpose)
 2. Upload CSV.
 3. Generate AI insights.
 4. Ask chatbot question (typed or via mic).
@@ -334,25 +354,7 @@ Frontend URL: `http://localhost:5173`
 
 ---
 
-## Observability/troubleshooting
-
-### Error: `No static resource api/datasets/{id}/ask`
-Cause: old backend process is running without latest endpoint mapping.
-Fix: restart backend and retry.
-
-### Error: `DataBufferLimitException: Exceeded limit on max bytes to buffer`
-Cause: embedding response exceeded default Spring WebFlux buffer.
-Fix: increased WebClient in-memory limit in `AiInsightsService`.
-
-### Error: `Invalid OpenAI API key`
-Set valid `OPENAI_API_KEY` in your backend shell before launch.
-
-### Error: speech-to-text not working
-Web Speech API is browser dependent (best in Chrome/Edge).
-
----
-
-## AI concepts used (explicit)
+## AI concepts used
 
 - Retrieval-Augmented Generation (RAG)
 - Embedding-based semantic search
@@ -367,7 +369,7 @@ Web Speech API is browser dependent (best in Chrome/Edge).
 ## Future upgrades
 
 - Persistent vector store (pgvector / Milvus) instead of on-request embedding
-- Per-user chat memory with trace IDs
+- Per-user chat memory with trace IDs, Google Auth login
 - Tool calling for scenario simulation and what-if planning
 - Streaming token responses for chat UX
 - Automated evaluation set for answer faithfulness
