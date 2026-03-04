@@ -1,11 +1,13 @@
 package com.sanskruti.cashflow.cashflow_backend.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sanskruti.cashflow.cashflow_backend.api.dto.AiAnswerResponse;
 import com.sanskruti.cashflow.cashflow_backend.api.dto.AiInsightsResponse;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @Service
@@ -13,13 +15,16 @@ public class AiFacadeService {
 
     private final AnalyticsService analyticsService;
     private final AiInsightsService aiInsightsService;
+    private final AiRagService aiRagService;
     private final ObjectMapper objectMapper;
 
     public AiFacadeService(AnalyticsService analyticsService,
                            AiInsightsService aiInsightsService,
+                           AiRagService aiRagService,
                            ObjectMapper objectMapper) {
         this.analyticsService = analyticsService;
         this.aiInsightsService = aiInsightsService;
+        this.aiRagService = aiRagService;
         this.objectMapper = objectMapper;
     }
 
@@ -40,5 +45,27 @@ public class AiFacadeService {
 
         String groundedJson = objectMapper.writeValueAsString(payload);
         return aiInsightsService.generateInsights(groundedJson);
+    }
+
+    public AiAnswerResponse askFromInsights(Long datasetId, int horizon, String question) throws Exception {
+        var summary = analyticsService.computeSummary(datasetId);
+        var risk = analyticsService.risk(datasetId);
+        var drivers = analyticsService.topExpenseDrivers(datasetId, 5);
+        var forecast = analyticsService.forecastWeeklyNet(datasetId, horizon);
+        var insights = explainCached(datasetId, horizon);
+
+        List<String> retrievedContext = aiRagService.retrieveContext(
+                datasetId, summary, risk, drivers, forecast, insights, question, 4);
+
+        String ragContextJson = objectMapper.writeValueAsString(Map.of(
+                "retrievedContext", retrievedContext
+        ));
+        AiAnswerResponse llmAnswer = aiInsightsService.answerQuestion(ragContextJson, question);
+        return new AiAnswerResponse(
+                llmAnswer.answer(),
+                llmAnswer.supportingPoints(),
+                retrievedContext,
+                "RAG+LLM"
+        );
     }
 }

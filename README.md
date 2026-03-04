@@ -1,293 +1,377 @@
-# ◈ Cashflow AI Dashboard
+# Cashflow AI Dashboard
 
-> **AI-powered financial intelligence platform** — deterministic cashflow analytics fused with grounded LLM-generated executive insights.
+AI-first financial intelligence platform that combines deterministic analytics with a grounded RAG + LLM assistant.
 
-![Stack](https://img.shields.io/badge/Backend-Spring%20Boot-brightgreen?style=flat-square)
-![Stack](https://img.shields.io/badge/Frontend-React%20%2B%20Vite-61DAFB?style=flat-square)
-![Stack](https://img.shields.io/badge/AI-OpenAI%20GPT--4.1--mini-blueviolet?style=flat-square)
-![Stack](https://img.shields.io/badge/DB-PostgreSQL-336791?style=flat-square)
+## Why this project is AI-engineering focused
 
----
+This app is not just "chat over data". It implements a clear AI pipeline:
 
-## 📸 Screenshots
+1. Deterministic analytics from transactional data
+2. AI insight generation from grounded analytics facts
+3. Retrieval-Augmented Generation (RAG) for Q&A over generated insights + computed metrics
+4. Speech-to-text UX for natural querying
 
-### Dashboard Overview
-![Dashboard Overview](docs/screenshots/dashboard-overview.png)
-
-### AI Insights Panel
-![AI Insights](docs/screenshots/ai-insights.png)
+The assistant answers with retrieved context, not free-form model memory.
 
 ---
 
-## 🚀 What It Does
+## Core capabilities
 
-Upload a transactions CSV and instantly get:
-
-| Feature | Description |
-|---|---|
-| **Financial Summary** | Total income, expense, net cashflow, weekly averages |
-| **Weekly Cashflow Chart** | Income · Expense · Net trends over time |
-| **Top Expense Drivers** | Ranked categories consuming the most cash |
-| **12-Week Forecast** | EMA-based net cashflow projection |
-| **Risk Score (0–100)** | Volatility + negative-week ratio composite score |
-| **AI Executive Summary** | Grounded LLM analysis — no hallucinated numbers |
-| **Strategic Recommendations** | Actionable steps with effort, impact, timeframe |
-
-> The system strictly separates **deterministic computation** from **AI reasoning** — the LLM only sees pre-computed facts, never raw transactions.
-
----
-
-## 🏗 Architecture
-
-```
-┌─────────────────────────────────┐
-│         Frontend                │
-│   React + Vite + MUI + Recharts │
-└──────────────┬──────────────────┘
-               │ REST (HTTP/JSON)
-               ▼
-┌─────────────────────────────────┐
-│         Backend                 │
-│   Spring Boot 4 · Java 17       │
-└────┬──────────────┬─────────────┘
-     │              │
-     ▼              ▼
-Analytics        AI Layer
-Engine           ───────────────
-──────────       AiFacadeService
-AnalyticsSvc     @Cacheable
-Risk scoring     AiInsightsSvc
-EMA forecast     → OpenAI API
-                 Rate limiter
-     │
-     ▼
-PostgreSQL
-Datasets + Transactions
-```
+- CSV ingestion for transaction datasets
+- Deterministic KPI analytics:
+  - Total income / expense / net
+  - Weekly series
+  - Top expense drivers
+  - Risk score (0–100)
+  - 12-week EMA forecast
+- AI Insights generation (`/explain`) with caching
+- RAG Chatbot (`/ask` and `/chat`) grounded on analytics + insights
+- Speech-to-text chat input (browser Web Speech API)
+- Auth-protected API with token-based session flow
+- Dark/light theme toggle in top header
 
 ---
 
-## ⚙️ Tech Stack
+## Tech stack
 
-| Layer | Technology |
-|---|---|
-| Backend | Spring Boot 4, Java 17 |
-| Database | PostgreSQL 16 |
-| ORM | Hibernate / JPA |
-| HTTP Client | Spring WebFlux WebClient |
-| Caching | Caffeine (30-min TTL) |
-| Frontend | React 19, Vite, TypeScript |
-| UI | MUI v7 (dark theme) |
-| Charts | Recharts |
-| AI | OpenAI Chat API (`gpt-4.1-mini`) |
+### Backend
+- Java 17
+- Spring Boot 4
+- Spring MVC + WebFlux WebClient
+- Spring Security (token-based auth filter)
+- Spring Cache + Caffeine
+- PostgreSQL + Spring Data JPA
+- OpenAI APIs:
+  - Chat Completions (insights and final answers)
+  - Embeddings (retrieval for RAG)
 
----
-
-## 🔧 Backend Setup
-
-**Requirements:** Java 17+, PostgreSQL 16+, Maven
-
-### 1 — Clone & navigate
-
-```bash
-git clone <repo-url>
-cd cashflow-ai-dashboard/backend
-```
-
-### 2 — Set your OpenAI key
-
-```bash
-export OPENAI_API_KEY=your_openai_key_here
-```
-
-### 3 — Start the backend
-
-```bash
-./mvnw spring-boot:run
-# → http://localhost:8080
-```
-
-> **Database config** is in `src/main/resources/application.yml`. Default: `localhost:5433/cashflow`, user `cashflow`.
+### Frontend
+- React 19 + TypeScript + Vite
+- MUI v7
+- Recharts
+- Axios
+- Web Speech API (`SpeechRecognition` / `webkitSpeechRecognition`)
 
 ---
 
-## 🎨 Frontend Setup
+## High-level architecture (Mermaid)
 
-**Requirements:** Node 18+, npm
+```mermaid
+flowchart LR
+    U[User] --> FE[React Frontend]
+    FE -->|Bearer token + REST| BE[Spring Boot Backend]
 
-```bash
-cd ../frontend
-npm install
-npm run dev
-# → http://localhost:5173
+    subgraph Backend
+      AUTH[AuthController + AuthService]
+      DATASET[DatasetController]
+      ANALYTICS[AnalyticsController + AnalyticsService]
+      AI[AiController]
+      FACADE[AiFacadeService]
+      RAG[AiRagService]
+      OPENAI[AiInsightsService]
+      CACHE[(Caffeine Cache)]
+      DB[(PostgreSQL)]
+
+      DATASET --> DB
+      ANALYTICS --> DB
+      AI --> FACADE
+      FACADE --> ANALYTICS
+      FACADE --> CACHE
+      FACADE --> RAG
+      RAG --> OPENAI
+      FACADE --> OPENAI
+    end
+
+    OPENAI --> OAI[(OpenAI API)]
 ```
 
 ---
 
-## 📡 API Reference
+## Backend communication flow for AI (detailed)
 
-### Upload CSV
-```
-POST /api/datasets/upload
-Content-Type: multipart/form-data
+### A) Insights generation (`POST /api/datasets/{id}/explain`)
 
-→ { "datasetId": 1 }
-```
+1. `AiController.explain()` receives request.
+2. `AiFacadeService.explainCached(datasetId, horizon)` orchestrates:
+   - `computeSummary()`
+   - `risk()`
+   - `topExpenseDrivers()`
+   - `forecastWeeklyNet()`
+3. Facade serializes grounded payload JSON.
+4. `AiInsightsService.generateInsights()` calls OpenAI Chat Completions.
+5. Response is parsed into strict JSON DTO (`AiInsightsResponse`).
+6. Result cached by key `datasetId:horizon`.
 
-### Analytics
-```
-GET  /api/datasets/{id}/summary
-GET  /api/datasets/{id}/weekly
-GET  /api/datasets/{id}/drivers?limit=5
-GET  /api/datasets/{id}/risk
-GET  /api/datasets/{id}/forecast?horizon=12
-```
+### B) RAG chatbot (`POST /api/datasets/{id}/ask`)
 
-### AI Insights *(cached)*
-```
-POST /api/datasets/{id}/explain?horizon=12
-```
+1. `AiController.ask()` receives question.
+2. `AiFacadeService.askFromInsights()` gathers analytics + cached insights.
+3. `AiRagService.retrieveContext()` builds knowledge chunks from:
+   - summary metrics
+   - risk score + reasons
+   - expense drivers
+   - forecast trend
+   - executive summary, key drivers, recommendations, confidence
+4. Retrieval:
+   - embed chunks (`/v1/embeddings`)
+   - embed question
+   - cosine similarity ranking
+   - top-K chunk selection
+5. Retrieved chunks are passed to `AiInsightsService.answerQuestion()`.
+6. LLM returns structured answer + supporting points.
+7. API returns:
+   - `answer`
+   - `supportingPoints`
+   - `retrievedContext`
+   - `method: "RAG+LLM"`
+
+This is explicit retrieval-first generation, not direct LLM answering.
 
 ---
 
-## 🤖 AI Grounding Strategy
+## UML diagrams
 
-**The core guarantee: the LLM never sees raw transactions.**
+### 1) Class diagram (key AI/auth components)
 
-```
-1. Compute analytics deterministically  →  AnalyticsService
-2. Serialize into structured JSON       →  AiFacadeService
-3. Send only computed facts to LLM      →  AiInsightsService
-4. Require structured JSON response     →  response_format: json_object
-5. Cache result per (datasetId:horizon) →  @Cacheable("aiInsights")
-```
-
-**Example grounded payload sent to OpenAI:**
-
-```json
-{
-  "summary": {
-    "totalIncome": 1068260.79,
-    "totalExpense": 898205.04,
-    "netCashflow": 170055.75,
-    "avgWeeklyNet": 9447.54
-  },
-  "risk": { "riskScore": 67 },
-  "topExpenseDrivers": [
-    { "category": "Payroll", "totalExpense": 199862.63 },
-    { "category": "Rent",    "totalExpense": 178161.58 }
-  ],
-  "forecastWeeklyNet": [
-    { "weekStart": "2025-06-23", "projectedNet": -24828.98 }
-  ]
-}
-```
-
-**Example AI response:**
-
-```json
-{
-  "executiveSummary": "The company shows positive net cashflow but high volatility...",
-  "keyDrivers": ["Payroll concentration", "Seasonal revenue dips"],
-  "recommendations": [
-    {
-      "action": "Reduce payroll overhead",
-      "impact": "Improve weekly cashflow stability",
-      "effort": "Medium",
-      "timeframe": "1–3 months"
+```mermaid
+classDiagram
+    class AuthController {
+      +login(request)
+      +me(authentication)
+      +logout(authHeader)
     }
-  ],
-  "confidence": 0.9,
-  "notes": []
-}
+
+    class AuthService {
+      +login(username,password)
+      +validate(token)
+      +logout(token)
+    }
+
+    class AiController {
+      +explain(id,horizon)
+      +ask(id,horizon,question)
+    }
+
+    class AiFacadeService {
+      +explainCached(datasetId,horizon)
+      +askFromInsights(datasetId,horizon,question)
+    }
+
+    class AiRagService {
+      +retrieveContext(datasetId,summary,risk,drivers,forecast,insights,question,topK)
+    }
+
+    class AiInsightsService {
+      +generateInsights(groundedJson)
+      +answerQuestion(ragContextJson,question)
+      +embedTexts(texts)
+    }
+
+    class AnalyticsService {
+      +computeSummary(datasetId)
+      +computeWeeklySeries(datasetId)
+      +topExpenseDrivers(datasetId,limit)
+      +risk(datasetId)
+      +forecastWeeklyNet(datasetId,horizon)
+    }
+
+    class DatasetRepository
+    class TransactionRepository
+
+    AuthController --> AuthService
+    AiController --> AiFacadeService
+    AiFacadeService --> AnalyticsService
+    AiFacadeService --> AiInsightsService
+    AiFacadeService --> AiRagService
+    AiRagService --> AiInsightsService
+    AnalyticsService --> DatasetRepository
+    AnalyticsService --> TransactionRepository
+```
+
+### 2) Sequence diagram for chatbot request
+
+```mermaid
+sequenceDiagram
+    participant UI as Frontend Chat UI
+    participant AIC as AiController
+    participant F as AiFacadeService
+    participant AN as AnalyticsService
+    participant R as AiRagService
+    participant O as AiInsightsService
+    participant OA as OpenAI API
+
+    UI->>AIC: POST /api/datasets/{id}/ask {question}
+    AIC->>F: askFromInsights(id,horizon,question)
+
+    F->>AN: computeSummary/risk/drivers/forecast
+    AN-->>F: deterministic metrics
+
+    F->>F: explainCached(id,horizon)
+    F-->>F: AI insights (cache hit/miss)
+
+    F->>R: retrieveContext(..., question)
+    R->>O: embedTexts(chunks)
+    O->>OA: POST /v1/embeddings
+    OA-->>O: chunk vectors
+    R->>O: embedTexts(question)
+    O->>OA: POST /v1/embeddings
+    OA-->>O: question vector
+    R-->>F: top-K retrieved chunks
+
+    F->>O: answerQuestion(retrievedContext,question)
+    O->>OA: POST /v1/chat/completions
+    OA-->>O: structured JSON answer
+    O-->>F: AiAnswerResponse
+    F-->>AIC: answer + supportingPoints + retrievedContext
+    AIC-->>UI: 200 OK
 ```
 
 ---
 
-## 🧮 Risk Scoring Model
+## Security architecture
 
-Risk score (0–100) is a composite of:
-
-- **Negative weeks ratio** → fraction of weeks with net < 0 (weight: 60%)
-- **Weekly net volatility** → std deviation relative to mean (weight: 40%)
-
-| Score | Label | Color |
-|---|---|---|
-| 0–33 | Low Risk | 🟢 Green |
-| 34–66 | Medium Risk | 🟡 Amber |
-| 67–100 | High Risk | 🔴 Red |
+- `POST /api/auth/login` is public.
+- All `/api/**` business endpoints require Bearer token.
+- Custom filter (`BearerTokenAuthFilter`) validates in-memory session tokens.
+- `AuthService` manages token issuance, validation, expiry, and logout.
 
 ---
 
-## 💾 Caching Strategy
+## API reference
 
-To minimize OpenAI API cost:
+### Auth
 
-- Responses are cached per `(datasetId + horizon)` key
-- **First call** → hits OpenAI, stores result in Caffeine cache (30 min TTL)
-- **Subsequent calls** → instant response, zero API cost
-- Rate limiter enforces 1-second minimum between outbound calls
+- `POST /api/auth/login`
+- `GET /api/auth/me`
+- `POST /api/auth/logout`
+
+### Dataset + analytics
+
+- `POST /api/datasets/upload`
+- `GET /api/datasets/{id}/summary`
+- `GET /api/datasets/{id}/weekly`
+- `GET /api/datasets/{id}/drivers?limit=5`
+- `GET /api/datasets/{id}/risk`
+- `GET /api/datasets/{id}/forecast?horizon=12`
+
+### AI
+
+- `POST /api/datasets/{id}/explain?horizon=12`
+- `POST /api/datasets/{id}/ask?horizon=12`
+- `POST /api/datasets/{id}/chat?horizon=12` (alias)
 
 ---
 
-## 🛡 Error Handling
+## Project structure
 
-| Scenario | Response |
-|---|---|
-| Dataset not found | `404 Dataset not found: {id}` |
-| Non-CSV file upload | `400 Only CSV files are accepted` |
-| OpenAI rate limited | `429 OpenAI rate limit reached` |
-| Invalid API key | `401 Invalid OpenAI API key` |
-| OpenAI server error | `502 OpenAI service error` |
-| Malformed AI response | `500 Failed to parse AI response` |
-
----
-
-## 📂 Project Structure
-
-```
+```text
 cashflow-ai-dashboard/
 ├── backend/
-│   └── src/main/java/.../
+│   └── src/main/java/com/sanskruti/cashflow/cashflow_backend/
 │       ├── api/
-│       │   ├── AiController.java
-│       │   ├── AnalyticsController.java
+│       │   ├── AuthController.java
 │       │   ├── DatasetController.java
-│       │   ├── GlobalExceptionHandler.java
+│       │   ├── AnalyticsController.java
+│       │   ├── AiController.java
 │       │   └── dto/
 │       ├── service/
-│       │   ├── AiFacadeService.java      ← @Cacheable wrapper
-│       │   ├── AiInsightsService.java    ← OpenAI client + rate limiter
-│       │   ├── AnalyticsService.java     ← deterministic engine
+│       │   ├── AuthService.java
+│       │   ├── AnalyticsService.java
+│       │   ├── AiFacadeService.java
+│       │   ├── AiInsightsService.java
+│       │   ├── AiRagService.java
 │       │   └── DatasetIngestionService.java
+│       ├── config/
+│       │   ├── SecurityConfig.java
+│       │   ├── BearerTokenAuthFilter.java
+│       │   ├── AuthProperties.java
+│       │   ├── CacheConfig.java
+│       │   └── CorsConfig.java
 │       ├── model/
-│       ├── repository/
-│       └── config/
-│           └── CacheConfig.java
+│       └── repository/
 ├── frontend/
-│   └── src/
-│       ├── App.tsx     ← MUI dark dashboard
-│       └── api.ts      ← axios client
+│   ├── src/
+│   │   ├── App.tsx
+│   │   └── api.ts
+│   ├── public/
+│   └── index.html
 └── README.md
 ```
 
 ---
 
-## 🔮 Future Enhancements
+## Local setup
 
-- [ ] Multi-user authentication & dataset ownership
-- [ ] Advanced forecasting (ARIMA / Prophet)
-- [ ] Anomaly detection on transaction data
-- [ ] PDF executive report export
-- [ ] Cloud deployment (AWS / GCP / Azure)
-- [ ] Real-time streaming updates via WebSocket
+## 1) Backend
+
+```bash
+cd backend
+export OPENAI_API_KEY=your_openai_key
+./mvnw spring-boot:run
+```
+
+Default backend URL: `http://localhost:8080`
+
+## 2) Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Frontend URL: `http://localhost:5173`
 
 ---
 
-## 🎯 Project Goal
+## Demo flow
 
-> Deliver **executive-ready financial analysis** by combining deterministic analytics with AI-generated reasoning — maintaining accuracy, cost efficiency, and architectural clarity.
+1. Login with demo credentials (`demo@cashflow.ai` / `password123`) unless overridden.
+2. Upload CSV.
+3. Generate AI insights.
+4. Ask chatbot question (typed or via mic).
+5. Show retrieved context and supporting points in response panel.
 
 ---
 
-**Author:** Sanskruti Manoria
+## Observability/troubleshooting
+
+### Error: `No static resource api/datasets/{id}/ask`
+Cause: old backend process is running without latest endpoint mapping.
+Fix: restart backend and retry.
+
+### Error: `DataBufferLimitException: Exceeded limit on max bytes to buffer`
+Cause: embedding response exceeded default Spring WebFlux buffer.
+Fix: increased WebClient in-memory limit in `AiInsightsService`.
+
+### Error: `Invalid OpenAI API key`
+Set valid `OPENAI_API_KEY` in your backend shell before launch.
+
+### Error: speech-to-text not working
+Web Speech API is browser dependent (best in Chrome/Edge).
+
+---
+
+## AI concepts used (explicit)
+
+- Retrieval-Augmented Generation (RAG)
+- Embedding-based semantic search
+- Cosine similarity ranking
+- Grounded generation from deterministic features
+- Structured output enforcement (JSON contracts)
+- Prompt constraints against hallucination
+- Cache-aware AI orchestration
+
+---
+
+## Future upgrades
+
+- Persistent vector store (pgvector / Milvus) instead of on-request embedding
+- Per-user chat memory with trace IDs
+- Tool calling for scenario simulation and what-if planning
+- Streaming token responses for chat UX
+- Automated evaluation set for answer faithfulness
+
+---
+
+Author: Sanskruti Manoria

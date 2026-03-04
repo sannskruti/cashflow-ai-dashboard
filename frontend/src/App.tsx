@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
 import {
   createTheme,
   ThemeProvider,
@@ -9,6 +9,7 @@ import {
   CardContent,
   Typography,
   Button,
+  TextField,
   LinearProgress,
   Alert,
   CircularProgress,
@@ -22,7 +23,21 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip as ReTooltip,
   ResponsiveContainer, CartesianGrid, BarChart, Bar, Legend,
 } from "recharts";
-import { uploadCsv, getSummary, getWeekly, getDrivers, getRisk, getForecast, explain } from "./api";
+import {
+  uploadCsv,
+  getSummary,
+  getWeekly,
+  getDrivers,
+  getRisk,
+  getForecast,
+  explain,
+  login as loginApi,
+  logout as logoutApi,
+  whoAmI,
+  getAuthToken,
+  setAuthToken,
+  askFromInsights,
+} from "./api";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -42,6 +57,33 @@ type AiInsights = {
   recommendations: { action: string; impact: string; effort: string; timeframe: string }[];
   confidence: number; notes: string[];
 };
+type AuthUser = { username: string };
+type ChatAnswer = {
+  answer: string;
+  supportingPoints: string[];
+  retrievedContext: string[];
+  method: string;
+};
+
+type SpeechRecognitionLike = {
+  lang: string;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+
+type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
+
+declare global {
+  interface Window {
+    SpeechRecognition?: SpeechRecognitionCtor;
+    webkitSpeechRecognition?: SpeechRecognitionCtor;
+  }
+}
 
 // ── Formatters ───────────────────────────────────────────────────────────────
 
@@ -70,69 +112,82 @@ function riskLabel(s: number) { return s < 34 ? "Low Risk" : s < 67 ? "Medium Ri
 
 // ── Theme ───────────────────────────────────────────────────────────────────
 
-const theme = createTheme({
-  palette: {
-    mode: "dark",
-    background: { default: "#060b14", paper: "rgba(12,18,30,0.8)" },
-    primary: { main: "#818cf8" },
-    success: { main: "#34d399" },
-    error:   { main: "#fb7185" },
-    warning: { main: "#fbbf24" },
-    text: { primary: "#f1f5f9", secondary: "#475569" },
-    divider: "rgba(255,255,255,0.06)",
-  },
-  typography: {
-    fontFamily: '"Inter", system-ui, sans-serif',
-    h4: { fontWeight: 700, letterSpacing: "-0.5px" },
-    h6: { fontWeight: 600 },
-  },
-  shape: { borderRadius: 16 },
-  components: {
-    MuiCard: {
-      styleOverrides: {
-        root: {
-          backgroundImage: "none",
-          backdropFilter: "blur(20px)",
-          border: "1px solid rgba(255,255,255,0.07)",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04)",
+function buildTheme(mode: "light" | "dark") {
+  const isLight = mode === "light";
+  return createTheme({
+    palette: {
+      mode,
+      background: {
+        default: isLight ? "#f4f7ff" : "#060b14",
+        paper: isLight ? "rgba(255,255,255,0.84)" : "rgba(12,18,30,0.8)",
+      },
+      primary: { main: "#6366f1" },
+      success: { main: "#16a34a" },
+      error:   { main: "#e11d48" },
+      warning: { main: "#d97706" },
+      text: {
+        primary: isLight ? "#0f172a" : "#f1f5f9",
+        secondary: isLight ? "#475569" : "#64748b",
+      },
+      divider: isLight ? "rgba(15,23,42,0.12)" : "rgba(255,255,255,0.06)",
+    },
+    typography: {
+      fontFamily: '"Inter", system-ui, sans-serif',
+      h4: { fontWeight: 700, letterSpacing: "-0.5px" },
+      h6: { fontWeight: 600 },
+    },
+    shape: { borderRadius: 16 },
+    components: {
+      MuiCard: {
+        styleOverrides: {
+          root: {
+            backgroundImage: "none",
+            backdropFilter: "blur(20px)",
+            border: isLight ? "1px solid rgba(15,23,42,0.08)" : "1px solid rgba(255,255,255,0.07)",
+            boxShadow: isLight
+              ? "0 10px 28px rgba(99,102,241,0.12), inset 0 1px 0 rgba(255,255,255,0.6)"
+              : "0 8px 32px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04)",
+          },
         },
       },
+      MuiButton: {
+        styleOverrides: { root: { borderRadius: 10, textTransform: "none", fontWeight: 600, letterSpacing: "0.01em" } },
+      },
+      MuiChip: {
+        styleOverrides: { root: { borderRadius: 8, fontWeight: 500 } },
+      },
+      MuiLinearProgress: {
+        styleOverrides: { root: { borderRadius: 99, height: 6 } },
+      },
     },
-    MuiButton: {
-      styleOverrides: { root: { borderRadius: 10, textTransform: "none", fontWeight: 600, letterSpacing: "0.01em" } },
-    },
-    MuiChip: {
-      styleOverrides: { root: { borderRadius: 8, fontWeight: 500 } },
-    },
-    MuiLinearProgress: {
-      styleOverrides: { root: { borderRadius: 99, height: 6, background: "rgba(255,255,255,0.06)" } },
-    },
-  },
-});
+  });
+}
 
 // ── Recharts tooltip style ───────────────────────────────────────────────────
 
-const TOOLTIP = {
-  contentStyle: {
-    background: "rgba(10,16,28,0.95)",
-    border: "1px solid rgba(255,255,255,0.1)",
-    borderRadius: 12,
-    color: "#f1f5f9",
-    fontSize: 12,
-    boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
-  },
-  labelStyle: { color: "#64748b", marginBottom: 4 },
-  formatter: (v: number | undefined) => [v !== undefined ? fmtFull(v) : "-", ""] as [string, string],
-};
+function chartTooltip(isLight: boolean) {
+  return {
+    contentStyle: {
+      background: isLight ? "rgba(255,255,255,0.98)" : "rgba(10,16,28,0.95)",
+      border: isLight ? "1px solid rgba(15,23,42,0.12)" : "1px solid rgba(255,255,255,0.1)",
+      borderRadius: 12,
+      color: isLight ? "#0f172a" : "#f1f5f9",
+      fontSize: 12,
+      boxShadow: isLight ? "0 8px 24px rgba(15,23,42,0.12)" : "0 8px 32px rgba(0,0,0,0.6)",
+    },
+    labelStyle: { color: "#64748b", marginBottom: 4 },
+    formatter: (v: number | undefined) => [v !== undefined ? fmtFull(v) : "-", ""] as [string, string],
+  };
+}
 
 // ── Sub-components ───────────────────────────────────────────────────────────
 
 function SectionCard({ title, badge, children }: { title: string; badge?: string; children: ReactNode }) {
   return (
-    <Card sx={{ background: "rgba(10,16,28,0.6)", height: "100%" }}>
+    <Card sx={(t) => ({ background: t.palette.mode === "light" ? "rgba(255,255,255,0.85)" : "rgba(10,16,28,0.6)", height: "100%" })}>
       <CardContent sx={{ p: 3 }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2.5 }}>
-          <Typography variant="caption" sx={{ color: "#475569", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700 }}>
+          <Typography variant="caption" sx={(t) => ({ color: t.palette.text.secondary, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700 })}>
             {title}
           </Typography>
           {badge && (
@@ -149,20 +204,26 @@ function KpiCard({ title, value, accent, sub, symbol }: {
   title: string; value: string; accent: string; sub?: string; symbol?: string;
 }) {
   return (
-    <Card sx={{
+    <Card sx={(t) => ({
       height: "100%",
-      background: `linear-gradient(145deg, ${alpha(accent, 0.09)} 0%, rgba(10,16,28,0.7) 65%)`,
+      background: t.palette.mode === "light"
+        ? `linear-gradient(145deg, ${alpha(accent, 0.13)} 0%, rgba(255,255,255,0.9) 65%)`
+        : `linear-gradient(145deg, ${alpha(accent, 0.09)} 0%, rgba(10,16,28,0.7) 65%)`,
       border: `1px solid ${alpha(accent, 0.22)}`,
-      boxShadow: `0 0 28px ${alpha(accent, 0.07)}, 0 8px 32px rgba(0,0,0,0.45)`,
+      boxShadow: t.palette.mode === "light"
+        ? `0 0 20px ${alpha(accent, 0.08)}, 0 8px 24px rgba(15,23,42,0.1)`
+        : `0 0 28px ${alpha(accent, 0.07)}, 0 8px 32px rgba(0,0,0,0.45)`,
       position: "relative", overflow: "hidden",
       transition: "box-shadow 0.25s",
-      "&:hover": { boxShadow: `0 0 40px ${alpha(accent, 0.15)}, 0 12px 40px rgba(0,0,0,0.5)` },
+      "&:hover": { boxShadow: t.palette.mode === "light"
+        ? `0 0 30px ${alpha(accent, 0.16)}, 0 12px 30px rgba(15,23,42,0.14)`
+        : `0 0 40px ${alpha(accent, 0.15)}, 0 12px 40px rgba(0,0,0,0.5)` },
       "&::before": {
         content: '""', position: "absolute",
         top: 0, left: 0, right: 0, height: "2px",
         background: `linear-gradient(90deg, transparent, ${accent}, transparent)`,
       },
-    }}>
+    })}>
       <CardContent sx={{ p: 2.5 }}>
         <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <Typography variant="caption" sx={{ color: "#475569", textTransform: "uppercase", letterSpacing: "0.09em", fontWeight: 600, lineHeight: 1.2 }}>
@@ -189,6 +250,16 @@ function KpiCard({ title, value, accent, sub, symbol }: {
 
 export default function App() {
   const fileRef = useRef<HTMLInputElement>(null);
+  const speechRef = useRef<SpeechRecognitionLike | null>(null);
+  const [mode, setMode] = useState<"light" | "dark">(
+    () => (localStorage.getItem("cashflow.themeMode") === "light" ? "light" : "dark"),
+  );
+  const [authReady, setAuthReady]   = useState(false);
+  const [authUser, setAuthUser]     = useState<AuthUser | null>(null);
+  const [showIntroWallpaper, setShowIntroWallpaper] = useState(true);
+  const [loginUsername, setLoginUsername] = useState("demo@cashflow.ai");
+  const [loginPassword, setLoginPassword] = useState("password123");
+  const [loginLoading, setLoginLoading] = useState(false);
   const [datasetId, setDatasetId]   = useState<number | null>(null);
   const [loading,   setLoading]     = useState(false);
   const [aiLoading, setAiLoading]   = useState(false);
@@ -198,10 +269,90 @@ export default function App() {
   const [risk,      setRisk]        = useState<Risk | null>(null);
   const [forecast,  setForecast]    = useState<ForecastPoint[]>([]);
   const [ai,        setAi]          = useState<AiInsights | null>(null);
+  const [chatQuestion, setChatQuestion] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatListening, setChatListening] = useState(false);
+  const [chatAnswer, setChatAnswer] = useState<ChatAnswer | null>(null);
+  const [chatError, setChatError] = useState<string | null>(null);
   const [error,     setError]       = useState<string | null>(null);
 
   const chartWeekly   = useMemo(() => weekly.map((w) => ({ ...w })), [weekly]);
   const chartForecast = useMemo(() => forecast.map((f) => ({ ...f })), [forecast]);
+  const theme = useMemo(() => buildTheme(mode), [mode]);
+  const isLight = mode === "light";
+  const TOOLTIP = useMemo(() => chartTooltip(isLight), [isLight]);
+
+  useEffect(() => {
+    localStorage.setItem("cashflow.themeMode", mode);
+  }, [mode]);
+
+  useEffect(() => {
+    async function initAuth() {
+      const token = getAuthToken();
+      if (!token) {
+        setAuthReady(true);
+        return;
+      }
+
+      try {
+        const me = await whoAmI();
+        setAuthUser({ username: me.username });
+      } catch {
+        setAuthToken(null);
+      } finally {
+        setAuthReady(true);
+      }
+    }
+
+    void initAuth();
+  }, []);
+
+  function resetDashboard() {
+    setShowIntroWallpaper(true);
+    setDatasetId(null);
+    setSummary(null);
+    setWeekly([]);
+    setDrivers([]);
+    setRisk(null);
+    setForecast([]);
+    setAi(null);
+    setChatQuestion("");
+    setChatAnswer(null);
+    setChatError(null);
+    setError(null);
+  }
+
+  async function onLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setLoginLoading(true);
+    try {
+      const res = await loginApi(loginUsername.trim(), loginPassword);
+      setAuthToken(res.token);
+      setAuthUser({ username: res.username });
+    } catch (e: unknown) {
+      setError(axiosMsg(e, "Login failed"));
+    } finally {
+      setLoginLoading(false);
+    }
+  }
+
+  async function onLogout() {
+    try {
+      await logoutApi();
+    } catch {
+      // ignore logout errors
+    } finally {
+      setAuthToken(null);
+      setAuthUser(null);
+      resetDashboard();
+    }
+  }
+
+  function onUploadButtonClick() {
+    setShowIntroWallpaper(false);
+    fileRef.current?.click();
+  }
 
   async function loadAll(id: number) {
     setError(null); setLoading(true);
@@ -229,12 +380,271 @@ export default function App() {
   async function onExplain() {
     if (!datasetId) return;
     setError(null); setAiLoading(true);
-    try { setAi(await explain(datasetId, 12)); }
+    try {
+      setAi(await explain(datasetId, 12));
+      setChatQuestion("");
+      setChatAnswer(null);
+      setChatError(null);
+    }
     catch (e: unknown) { setError(axiosMsg(e, "AI explain failed")); }
     finally { setAiLoading(false); }
   }
 
+  function startSpeechToText() {
+    const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Ctor) {
+      setChatError("Speech-to-text is not supported in this browser. Try Chrome.");
+      return;
+    }
+
+    setChatError(null);
+    const recognition = new Ctor();
+    speechRef.current = recognition;
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (event) => {
+      const transcript = event.results?.[0]?.[0]?.transcript;
+      if (transcript) {
+        setChatQuestion((prev) => (prev ? `${prev} ${transcript}` : transcript));
+      }
+    };
+    recognition.onerror = (event) => {
+      setChatError(`Speech recognition error: ${event.error}`);
+      setChatListening(false);
+    };
+    recognition.onend = () => {
+      setChatListening(false);
+      speechRef.current = null;
+    };
+    setChatListening(true);
+    recognition.start();
+  }
+
+  function stopSpeechToText() {
+    speechRef.current?.stop();
+    setChatListening(false);
+  }
+
+  async function onAskQuestion() {
+    if (!datasetId || !ai) {
+      setChatError("Generate AI Insights first, then ask a question.");
+      return;
+    }
+    const question = chatQuestion.trim();
+    if (!question) {
+      setChatError("Please type or speak a question.");
+      return;
+    }
+
+    setChatError(null);
+    setChatLoading(true);
+    try {
+      const answer = await askFromInsights(datasetId, question, 12);
+      setChatAnswer(answer);
+    } catch (e: unknown) {
+      setChatError(axiosMsg(e, "Failed to get AI answer"));
+    } finally {
+      setChatLoading(false);
+    }
+  }
+
   const netColor = summary ? (summary.netCashflow >= 0 ? "#34d399" : "#fb7185") : "#818cf8";
+
+  if (!authReady) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center", bgcolor: "background.default" }}>
+          <Stack spacing={2} alignItems="center">
+            <CircularProgress sx={{ color: "#818cf8" }} />
+            <Typography variant="body2" sx={{ color: "#475569" }}>Checking session…</Typography>
+          </Stack>
+        </Box>
+      </ThemeProvider>
+    );
+  }
+
+  if (!authUser) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Box sx={{
+          minHeight: "100vh",
+          bgcolor: "background.default",
+          display: "grid",
+          placeItems: "center",
+          px: 2,
+          position: "relative",
+          overflow: "hidden",
+          "@keyframes floatA": {
+            "0%, 100%": { transform: "translateY(0px) scale(1)" },
+            "50%": { transform: "translateY(-18px) scale(1.06)" },
+          },
+          "@keyframes floatB": {
+            "0%, 100%": { transform: "translateY(0px) scale(1)" },
+            "50%": { transform: "translateY(12px) scale(0.96)" },
+          },
+          "@keyframes fadeInUp": {
+            "0%": { opacity: 0, transform: "translateY(18px)" },
+            "100%": { opacity: 1, transform: "translateY(0)" },
+          },
+        }}>
+          <Box sx={{
+            position: "absolute",
+            inset: 0,
+            backgroundImage: "url('/login-wallpaper.webp')",
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            opacity: isLight ? 0.22 : 0.38,
+            filter: "saturate(1.12) contrast(1.08)",
+            pointerEvents: "none",
+          }} />
+          <Box sx={{
+            position: "absolute",
+            inset: 0,
+            background: isLight
+              ? "linear-gradient(180deg, rgba(255,255,255,0.35) 0%, rgba(244,247,255,0.9) 68%)"
+              : "linear-gradient(180deg, rgba(2,6,23,0.35) 0%, rgba(2,6,23,0.88) 68%)",
+            pointerEvents: "none",
+          }} />
+          <Box sx={{
+            position: "absolute",
+            width: 460,
+            height: 460,
+            borderRadius: "50%",
+            background: "radial-gradient(circle, rgba(99,102,241,0.24) 0%, rgba(99,102,241,0) 68%)",
+            top: -160,
+            left: -120,
+            filter: "blur(8px)",
+            animation: "floatA 8s ease-in-out infinite",
+            pointerEvents: "none",
+          }} />
+          <Box sx={{
+            position: "absolute",
+            width: 420,
+            height: 420,
+            borderRadius: "50%",
+            background: "radial-gradient(circle, rgba(52,211,153,0.18) 0%, rgba(52,211,153,0) 70%)",
+            bottom: -160,
+            right: -120,
+            filter: "blur(8px)",
+            animation: "floatB 9s ease-in-out infinite",
+            pointerEvents: "none",
+          }} />
+
+          <Box sx={{ width: "100%", maxWidth: 760, animation: "fadeInUp 500ms ease-out", zIndex: 1 }}>
+            <Typography sx={{
+              mb: 4.5,
+              textAlign: "center",
+              fontSize: { xs: 40, sm: 62 },
+              lineHeight: 0.96,
+              fontWeight: 900,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              background: "linear-gradient(135deg, #dbeafe 0%, #a5b4fc 55%, #6ee7b7 100%)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+              textShadow: isLight ? "0 0 14px rgba(99,102,241,0.2)" : "0 0 20px rgba(99,102,241,0.35)",
+            }}>
+              Cashflow AI App
+            </Typography>
+
+            <Card sx={{
+              width: "100%",
+              maxWidth: 560,
+              mx: "auto",
+              background: "linear-gradient(165deg, rgba(10,16,28,0.82) 0%, rgba(7,11,22,0.74) 100%)",
+              border: "1px solid rgba(129,140,248,0.2)",
+              boxShadow: "0 24px 70px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03) inset",
+              backdropFilter: "blur(20px)",
+            }}>
+            <CardContent sx={{ p: { xs: 3.5, sm: 4.5 } }}>
+              <Typography sx={{ mt: 0.4, color: "#64748b", fontSize: 19, lineHeight: 1.55 }}>
+                Sign in to continue to your executive cashflow control center.
+              </Typography>
+              <Stack direction="row" spacing={1} sx={{ mt: 2.25, mb: 3 }}>
+                <Chip label="Enterprise-grade insights" size="small" sx={{
+                  bgcolor: alpha("#818cf8", 0.14),
+                  color: "#c7d2fe",
+                  border: "1px solid",
+                  borderColor: alpha("#818cf8", 0.35),
+                }} />
+                <Chip label="Built by Sanskruti Manoria" size="small" sx={{
+                  bgcolor: alpha("#34d399", 0.12),
+                  color: "#6ee7b7",
+                  border: "1px solid",
+                  borderColor: alpha("#34d399", 0.3),
+                }} />
+              </Stack>
+              {error && (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {error}
+                </Alert>
+              )}
+              <Box component="form" onSubmit={onLogin} sx={{ display: "grid", gap: 2.25 }}>
+                <TextField
+                  label="Username"
+                  size="small"
+                  value={loginUsername}
+                  onChange={(e) => setLoginUsername(e.target.value)}
+                  autoComplete="username"
+                  sx={{
+                    "& .MuiOutlinedInput-root": {
+                      fontSize: 20,
+                      borderRadius: 2,
+                      bgcolor: "rgba(255,255,255,0.01)",
+                    },
+                    "& .MuiInputLabel-root": { fontSize: 17 },
+                  }}
+                />
+                <TextField
+                  label="Password"
+                  size="small"
+                  type="password"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  autoComplete="current-password"
+                  sx={{
+                    "& .MuiOutlinedInput-root": {
+                      fontSize: 20,
+                      borderRadius: 2,
+                      bgcolor: "rgba(255,255,255,0.01)",
+                    },
+                    "& .MuiInputLabel-root": { fontSize: 17 },
+                  }}
+                />
+                <Button
+                  type="submit"
+                  variant="contained"
+                  disabled={loginLoading}
+                  sx={{
+                    mt: 1,
+                    py: 1.35,
+                    fontSize: 20,
+                    fontWeight: 700,
+                    borderRadius: 2.5,
+                    letterSpacing: "0.01em",
+                    background: "linear-gradient(135deg, #818cf8 0%, #6366f1 60%, #4f46e5 100%)",
+                    boxShadow: "0 12px 30px rgba(99,102,241,0.4)",
+                    transition: "transform 160ms ease, box-shadow 160ms ease",
+                    "&:hover": {
+                      transform: "translateY(-1px)",
+                      boxShadow: "0 14px 36px rgba(99,102,241,0.55)",
+                    },
+                  }}
+                >
+                  {loginLoading && <CircularProgress size={14} sx={{ mr: 1, color: "inherit" }} />}
+                  {loginLoading ? "Signing in…" : "Sign in"}
+                </Button>
+              </Box>
+            </CardContent>
+          </Card>
+          </Box>
+        </Box>
+      </ThemeProvider>
+    );
+  }
 
   return (
     <ThemeProvider theme={theme}>
@@ -245,21 +655,47 @@ export default function App() {
         minHeight: "100vh", bgcolor: "background.default", pb: 6, position: "relative",
         "&::before": {
           content: '""', position: "fixed", inset: 0, zIndex: 0, pointerEvents: "none",
-          background: `
+          background: isLight ? `
+            radial-gradient(ellipse 60% 40% at 15% 15%, rgba(99,102,241,0.1) 0%, transparent 60%),
+            radial-gradient(ellipse 50% 35% at 85% 80%, rgba(52,211,153,0.08) 0%, transparent 55%),
+            radial-gradient(ellipse 40% 30% at 50% 50%, rgba(251,113,133,0.06) 0%, transparent 60%)
+          ` : `
             radial-gradient(ellipse 60% 40% at 15% 15%, rgba(99,102,241,0.07) 0%, transparent 60%),
             radial-gradient(ellipse 50% 35% at 85% 80%, rgba(52,211,153,0.05) 0%, transparent 55%),
             radial-gradient(ellipse 40% 30% at 50% 50%, rgba(251,113,133,0.03) 0%, transparent 60%)
           `,
         },
       }}>
+        {showIntroWallpaper && (
+          <>
+            <Box sx={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 0,
+              pointerEvents: "none",
+              backgroundImage: "url('/login-wallpaper.webp')",
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+              opacity: 0.26,
+              filter: "saturate(1.1) contrast(1.08)",
+            }} />
+            <Box sx={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 0,
+              pointerEvents: "none",
+              background: "linear-gradient(180deg, rgba(2,6,23,0.28) 0%, rgba(2,6,23,0.86) 74%)",
+            }} />
+          </>
+        )}
 
         {/* ── Header ── */}
         <Box sx={{
           px: { xs: 2, md: 5 }, py: 1.75,
-          borderBottom: "1px solid rgba(255,255,255,0.06)",
+          borderBottom: isLight ? "1px solid rgba(15,23,42,0.12)" : "1px solid rgba(255,255,255,0.06)",
           display: "flex", alignItems: "center", justifyContent: "space-between",
           backdropFilter: "blur(24px)",
-          background: "rgba(6,11,20,0.85)",
+          background: isLight ? "rgba(255,255,255,0.82)" : "rgba(6,11,20,0.85)",
           position: "sticky", top: 0, zIndex: 10,
         }}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
@@ -278,13 +714,43 @@ export default function App() {
               }}>
                 Cashflow AI
               </Typography>
-              <Typography variant="caption" sx={{ color: "#334155", fontSize: 10, letterSpacing: "0.06em" }}>
+              <Typography variant="caption" sx={{ color: "#64748b", fontSize: 11, letterSpacing: "0.08em" }}>
                 FINANCIAL INTELLIGENCE
               </Typography>
             </Box>
           </Box>
 
+          <Typography sx={{
+            position: "absolute",
+            left: "50%",
+            transform: "translateX(-50%)",
+            color: "#e2e8f0",
+            fontSize: 17,
+            fontWeight: 600,
+            letterSpacing: "0.01em",
+            display: { xs: "none", md: "block" },
+            pointerEvents: "none",
+          }}>
+            Welcome {authUser.username}
+          </Typography>
+
           <Stack direction="row" spacing={1.5} alignItems="center">
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => setMode((m) => (m === "dark" ? "light" : "dark"))}
+              sx={{
+                borderColor: isLight ? "rgba(15,23,42,0.2)" : "rgba(255,255,255,0.16)",
+                color: isLight ? "#334155" : "#e2e8f0",
+                fontSize: 14,
+                fontWeight: 600,
+                px: 1.8,
+                py: 0.7,
+                "&:hover": { borderColor: isLight ? "rgba(15,23,42,0.36)" : "rgba(255,255,255,0.3)" },
+              }}
+            >
+              {isLight ? "Dark Mode" : "Light Mode"}
+            </Button>
             {datasetId && (
               <Chip label={`Dataset #${datasetId}`} size="small" sx={{
                 bgcolor: alpha("#818cf8", 0.1), color: "#818cf8",
@@ -293,9 +759,14 @@ export default function App() {
             )}
             <input ref={fileRef} type="file" accept=".csv" style={{ display: "none" }}
               onChange={(e) => { const f = e.target.files?.[0]; if (f) onUpload(f); }} />
-            <Button variant="outlined" size="small" onClick={() => fileRef.current?.click()} disabled={loading}
+            <Button variant="outlined" size="small" onClick={onUploadButtonClick} disabled={loading}
               sx={{
-                borderColor: "rgba(255,255,255,0.12)", color: "#94a3b8",
+                borderColor: "rgba(255,255,255,0.16)",
+                color: "#cbd5e1",
+                fontSize: 15,
+                fontWeight: 600,
+                px: 2.1,
+                py: 0.8,
                 "&:hover": { borderColor: "rgba(255,255,255,0.25)", bgcolor: "rgba(255,255,255,0.04)" },
               }}>
               {loading && <CircularProgress size={12} sx={{ mr: 1 }} />}
@@ -303,13 +774,32 @@ export default function App() {
             </Button>
             <Button variant="contained" size="small" disabled={!datasetId || aiLoading} onClick={onExplain}
               sx={{
+                fontSize: 15,
+                fontWeight: 700,
+                px: 2.2,
+                py: 0.8,
+                color: "#eef2ff",
                 background: "linear-gradient(135deg, #818cf8 0%, #6366f1 100%)",
                 boxShadow: "0 0 20px rgba(99,102,241,0.5), 0 4px 12px rgba(0,0,0,0.3)",
                 "&:hover": { boxShadow: "0 0 30px rgba(99,102,241,0.65), 0 4px 16px rgba(0,0,0,0.4)" },
-                "&:disabled": { opacity: 0.4 },
+                "&.Mui-disabled": {
+                  color: "rgba(238,242,255,0.75)",
+                  background: "rgba(129,140,248,0.45)",
+                },
               }}>
               {aiLoading && <CircularProgress size={12} sx={{ mr: 1, color: "inherit" }} />}
               {aiLoading ? "Analyzing…" : "✦ AI Insights"}
+            </Button>
+            <Button variant="text" size="small" onClick={onLogout}
+              sx={{
+                color: "#cbd5e1",
+                fontSize: 15,
+                fontWeight: 600,
+                px: 1.4,
+                py: 0.8,
+                "&:hover": { bgcolor: "rgba(255,255,255,0.05)" },
+              }}>
+              Logout
             </Button>
           </Stack>
         </Box>
@@ -340,7 +830,7 @@ export default function App() {
               }}>
                 Upload your transactions to begin
               </Typography>
-              <Typography variant="body2" sx={{ color: "#334155" }}>
+              <Typography variant="body2" sx={{ color: "#cbd5e1", fontSize: { xs: 19, md: 36 }, lineHeight: 1.45, fontWeight: 500 }}>
                 CSV → Risk Score · Expense Drivers · 12-Week Forecast · AI Executive Summary
               </Typography>
             </Box>
@@ -463,13 +953,14 @@ export default function App() {
                 )}
               </Box>
 
-              {/* ── AI Insights ── */}
-              <Card sx={{
-                background: "linear-gradient(145deg, rgba(99,102,241,0.05) 0%, rgba(10,16,28,0.7) 60%)",
-                border: "1px solid rgba(129,140,248,0.15)",
-                boxShadow: "0 0 40px rgba(99,102,241,0.06), 0 8px 32px rgba(0,0,0,0.5)",
-              }}>
-                <CardContent sx={{ p: 3 }}>
+              {/* ── AI Insights + Chatbot ── */}
+              <Box sx={{ display: "grid", gridTemplateColumns: "1fr", gap: 3, mt: 1 }}>
+                <Card sx={{
+                  background: "linear-gradient(145deg, rgba(99,102,241,0.05) 0%, rgba(10,16,28,0.7) 60%)",
+                  border: "1px solid rgba(129,140,248,0.15)",
+                  boxShadow: "0 0 40px rgba(99,102,241,0.06), 0 8px 32px rgba(0,0,0,0.5)",
+                }}>
+                  <CardContent sx={{ p: 3 }}>
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 2.5 }}>
                     <Typography variant="caption" sx={{ color: "#475569", textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700 }}>
                       AI Insights
@@ -576,8 +1067,111 @@ export default function App() {
                       </Box>
                     </Box>
                   )}
+
                 </CardContent>
               </Card>
+
+              <Card sx={{
+                background: "linear-gradient(145deg, rgba(16,24,40,0.8) 0%, rgba(10,16,28,0.72) 100%)",
+                border: "1px solid rgba(129,140,248,0.16)",
+              }}>
+                <CardContent sx={{ p: 2.5 }}>
+                  <Box sx={{ display: "grid", gap: 1.5 }}>
+                    <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                      <Typography variant="caption" sx={{ color: "#818cf8", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em" }}>
+                        Ask AI Chatbot
+                      </Typography>
+                      <Stack direction="row" spacing={1}>
+                        <Chip label="RAG" size="small" sx={{ fontSize: 9, height: 18, bgcolor: alpha("#34d399", 0.1), color: "#34d399" }} />
+                        <Chip label="LLM" size="small" sx={{ fontSize: 9, height: 18, bgcolor: alpha("#818cf8", 0.12), color: "#818cf8" }} />
+                      </Stack>
+                    </Stack>
+
+                    <Typography variant="caption" sx={{ color: "#64748b" }}>
+                      Ask questions grounded in the generated insights. Use the mic for speech-to-text.
+                    </Typography>
+
+                    <TextField
+                      multiline
+                      minRows={2}
+                      maxRows={4}
+                      fullWidth
+                      placeholder="Example: Why is our risk score high and what should we do first?"
+                      value={chatQuestion}
+                      onChange={(e) => setChatQuestion(e.target.value)}
+                      disabled={!ai || chatLoading}
+                    />
+
+                    <Stack direction="row" spacing={1.2} alignItems="center">
+                      <Button
+                        variant={chatListening ? "contained" : "outlined"}
+                        onClick={chatListening ? stopSpeechToText : startSpeechToText}
+                        disabled={!ai || chatLoading}
+                        sx={{ minWidth: 120 }}
+                      >
+                        {chatListening ? "Stop Mic" : "Use Mic"}
+                      </Button>
+                      <Button
+                        variant="contained"
+                        onClick={onAskQuestion}
+                        disabled={!ai || chatLoading}
+                        sx={{ minWidth: 130 }}
+                      >
+                        {chatLoading ? "Thinking…" : "Ask AI"}
+                      </Button>
+                    </Stack>
+
+                    {!ai && (
+                      <Typography variant="caption" sx={{ color: "#fbbf24" }}>
+                        Generate AI Insights first to unlock chat.
+                      </Typography>
+                    )}
+
+                    {chatError && (
+                      <Alert severity="error" sx={{ mt: 0.5 }}>
+                        {chatError}
+                      </Alert>
+                    )}
+
+                    {chatAnswer && (
+                      <Paper sx={{ mt: 0.5, p: 2, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(129,140,248,0.15)" }}>
+                        <Typography variant="body2" sx={{ color: "#e2e8f0", lineHeight: 1.75 }}>
+                          {chatAnswer.answer}
+                        </Typography>
+
+                        {!!chatAnswer.supportingPoints?.length && (
+                          <Box sx={{ mt: 1.5 }}>
+                            <Typography variant="caption" sx={{ color: "#818cf8", fontWeight: 700 }}>Supporting Points</Typography>
+                            <Stack spacing={0.7} sx={{ mt: 0.7 }}>
+                              {chatAnswer.supportingPoints.map((point, idx) => (
+                                <Typography key={idx} variant="caption" sx={{ color: "#94a3b8", lineHeight: 1.6 }}>
+                                  • {point}
+                                </Typography>
+                              ))}
+                            </Stack>
+                          </Box>
+                        )}
+
+                        {!!chatAnswer.retrievedContext?.length && (
+                          <Box sx={{ mt: 1.5 }}>
+                            <Typography variant="caption" sx={{ color: "#34d399", fontWeight: 700 }}>
+                              Retrieved Context ({chatAnswer.method})
+                            </Typography>
+                            <Stack spacing={0.7} sx={{ mt: 0.7 }}>
+                              {chatAnswer.retrievedContext.map((ctx, idx) => (
+                                <Typography key={idx} variant="caption" sx={{ color: "#64748b", lineHeight: 1.6 }}>
+                                  {idx + 1}. {ctx}
+                                </Typography>
+                              ))}
+                            </Stack>
+                          </Box>
+                        )}
+                      </Paper>
+                    )}
+                  </Box>
+                </CardContent>
+              </Card>
+              </Box>
             </>
           )}
         </Box>

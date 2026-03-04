@@ -18,8 +18,14 @@ ai:
   openai:
     apiKey: ${OPENAI_API_KEY}
     model: "gpt-4.1-mini"
+    embeddingModel: "text-embedding-3-small"
 
 logging:
   level:
     org.springframework.web.reactive.function.client.ExchangeFunctions: INFO
     org.springframework.web: INFO
+
+auth:
+  demoUsername: demo@cashflow.ai
+  demoPassword: password123
+  tokenTtlMinutes: 480
