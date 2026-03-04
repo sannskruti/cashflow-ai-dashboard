@@ -5,6 +5,7 @@ AI-first financial intelligence platform that combines deterministic analytics w
 ## Problem and solution
 
 ### Problem
+
 Small businesses and finance teams often struggle with cashflow visibility because:
 
 - Transaction data is scattered and hard to interpret quickly.
@@ -13,6 +14,7 @@ Small businesses and finance teams often struggle with cashflow visibility becau
 - Generic AI chat tools can hallucinate if they are not grounded in business data.
 
 ### Solution (this app)
+
 Cashflow AI Dashboard solves this by combining analytics engineering + applied AI:
 
 - Ingests raw CSV transaction data into a structured dataset.
@@ -46,7 +48,19 @@ The assistant answers with retrieved context, not free-form model memory.
 - RAG Chatbot (`/ask` and `/chat`) grounded on analytics + insights
 - Speech-to-text chat input (browser Web Speech API)
 - Auth-protected API with token-based session flow
+- Multi-step auth UI:
+  - Sign in
+  - Sign up
+  - Forgot password (reset)
 - Dark/light theme toggle in top header
+- Two-tab home experience:
+  - `Dashboard` tab (KPIs, charts, AI insights, chatbot)
+  - `Transactions` tab (search + filter + pagination + row edit/delete)
+- Transaction workbench:
+  - Server-side pagination (20 rows/page)
+  - Search by description/category/type
+  - Filter by type and category
+  - Row detail popup with description edit, save, delete
 
 ---
 
@@ -125,15 +139,18 @@ flowchart LR
 ### B) RAG chatbot (`POST /api/datasets/{id}/ask`)
 
 1. `AiController.ask()` receives question.
-2. `AiFacadeService.askFromInsights()` gathers analytics + cached insights.
-3. `AiRagService.retrieveContext()` builds knowledge chunks from:
+2. `AiFacadeService.askFromInsights()` tries retrieval first.
+3. If chunks are missing, service auto-attempts indexing via `AiRagService.indexDataset()` using:
    - summary metrics
    - risk score + reasons
    - expense drivers
    - forecast trend
-   - executive summary, key drivers, recommendations, confidence
+   - weekly aggregates
+   - sampled transactions
 4. Retrieval:
-   - embed chunks (`/v1/embeddings`)
+   - vector mode if pgvector is available
+   - lexical fallback mode if pgvector is unavailable
+   - embed chunks (`/v1/embeddings`) in vector mode
    - embed question
    - cosine similarity ranking
    - top-K chunk selection
@@ -145,7 +162,7 @@ flowchart LR
    - `retrievedContext`
    - `method: "RAG+LLM"`
 
-This is explicit retrieval-first generation, not direct LLM answering.
+This is retrieval-first generation with graceful lexical fallback.
 
 ---
 
@@ -157,12 +174,16 @@ This is explicit retrieval-first generation, not direct LLM answering.
 classDiagram
     class AuthController {
       +login(request)
+      +signup(request)
+      +forgotPassword(request)
       +me(authentication)
       +logout(authHeader)
     }
 
     class AuthService {
       +login(username,password)
+      +signup(username,password)
+      +resetPassword(username,newPassword)
       +validate(token)
       +logout(token)
     }
@@ -178,7 +199,9 @@ classDiagram
     }
 
     class AiRagService {
-      +retrieveContext(datasetId,summary,risk,drivers,forecast,insights,question,topK)
+      +indexDataset(datasetId,summary,risk,drivers,forecast,weekly)
+      +appendInsights(datasetId,insights)
+      +retrieveContext(datasetId,question,topK)
     }
 
     class AiInsightsService {
@@ -250,7 +273,10 @@ sequenceDiagram
 
 ## Security architecture
 
-- `POST /api/auth/login` is public.
+- Public auth routes:
+  - `POST /api/auth/login`
+  - `POST /api/auth/signup`
+  - `POST /api/auth/forgot-password`
 - All `/api/**` business endpoints require Bearer token.
 - Custom filter (`BearerTokenAuthFilter`) validates in-memory session tokens.
 - `AuthService` manages token issuance, validation, expiry, and logout.
@@ -262,6 +288,8 @@ sequenceDiagram
 ### Auth
 
 - `POST /api/auth/login`
+- `POST /api/auth/signup`
+- `POST /api/auth/forgot-password`
 - `GET /api/auth/me`
 - `POST /api/auth/logout`
 
@@ -273,6 +301,10 @@ sequenceDiagram
 - `GET /api/datasets/{id}/drivers?limit=5`
 - `GET /api/datasets/{id}/risk`
 - `GET /api/datasets/{id}/forecast?horizon=12`
+- `GET /api/datasets/{id}/transactions?page=0&size=20&search=&type=&category=`
+- `GET /api/datasets/{id}/transactions/categories`
+- `PUT /api/datasets/{id}/transactions/{transactionId}`
+- `DELETE /api/datasets/{id}/transactions/{transactionId}`
 
 ### AI
 
@@ -326,11 +358,19 @@ cashflow-ai-dashboard/
 
 ```bash
 cd backend
+# Optional: set only if you want AI insights/chat to call OpenAI
 export OPENAI_API_KEY=your_openai_key
 ./mvnw spring-boot:run
 ```
 
 Default backend URL: `http://localhost:8080`
+
+Database expected by default:
+
+- host: `localhost`
+- port: `5433`
+- db: `cashflow`
+- user/pass: `cashflow` / `cashflow`
 
 ## 2) Frontend
 
@@ -346,11 +386,13 @@ Frontend URL: `http://localhost:5173`
 
 ## Demo flow
 
-1. Login with demo credentials (`demo@cashflow.ai` / `password123`) unless overridden (Right now for demo purpose)
+1. Login with demo credentials (`demo@cashflow.ai` / `password123`) or create account using Sign up.
 2. Upload CSV.
-3. Generate AI insights.
-4. Ask chatbot question (typed or via mic).
-5. Show retrieved context and supporting points in response panel.
+3. Explore Dashboard tab (KPIs, charts, risk, forecast).
+4. Open Transactions tab for search/filter/pagination.
+5. Click any row to edit description or delete.
+6. Generate AI insights.
+7. Ask chatbot question (typed or via mic).
 
 ---
 
