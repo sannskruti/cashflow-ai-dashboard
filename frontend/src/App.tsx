@@ -608,10 +608,21 @@ export default function App() {
 
     setChatError(null);
     setChatLoading(true);
+    setChatAnswer(null);
+    setSelectedSourceIndex(null);
     try {
       const answer = await askFromInsights(datasetId, question, 12);
-      setChatAnswer(answer);
+      const normalizedAnswer = (answer.answer ?? "").trim();
+      if (!normalizedAnswer) {
+        setChatAnswer({
+          ...answer,
+          answer: "I could not generate a complete answer for that question. Please try a more specific question about risk, drivers, forecast, or transactions.",
+        });
+      } else {
+        setChatAnswer(answer);
+      }
       setSelectedSourceIndex(answer.retrievedContext.length ? 0 : null);
+      setChatQuestion("");
     } catch (e: unknown) {
       setChatError(axiosMsg(e, "Failed to get AI answer"));
     } finally {
@@ -1410,6 +1421,22 @@ export default function App() {
                       onChange={(e) => setChatQuestion(e.target.value)}
                       disabled={!ai || chatLoading}
                     />
+
+                    {chatListening && (
+                      <Chip
+                        icon={<span style={{ fontSize: 14 }}>🎙️</span>}
+                        label="Listening..."
+                        size="small"
+                        sx={{
+                          width: "fit-content",
+                          bgcolor: alpha("#f59e0b", 0.12),
+                          color: "#fbbf24",
+                          border: "1px solid",
+                          borderColor: alpha("#f59e0b", 0.35),
+                          fontWeight: 700,
+                        }}
+                      />
+                    )}
 
                     <Stack direction="row" spacing={1.2} alignItems="center">
                       <Button

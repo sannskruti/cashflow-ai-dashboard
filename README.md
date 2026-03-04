@@ -271,6 +271,8 @@ sequenceDiagram
 
 ---
 
+![alt text](<Arch Diagram.png>)
+
 ## Security architecture
 
 - Public auth routes:

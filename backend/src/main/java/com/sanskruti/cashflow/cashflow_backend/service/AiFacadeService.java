@@ -63,14 +63,35 @@ public class AiFacadeService {
             var summary = analyticsService.computeSummary(datasetId);
             var risk = analyticsService.risk(datasetId);
             var drivers = analyticsService.topExpenseDrivers(datasetId, 12);
-            var forecast = analyticsService.forecastWeeklyNet(datasetId, 12);
+            var forecast = analyticsService.forecastWeeklyNet(datasetId, horizon);
             var weekly = analyticsService.computeWeeklySeries(datasetId);
             aiRagService.indexDataset(datasetId, summary, risk, drivers, forecast, weekly);
             retrievedContext = aiRagService.retrieveContext(datasetId, question, 5);
         }
 
         if (retrievedContext.isEmpty()) {
-            throw new IllegalArgumentException("No indexed context found for this dataset. Please regenerate insights and retry.");
+            // If chunk retrieval is unavailable, answer from deterministic analytics payload
+            // so chat remains usable instead of hard-failing.
+            var summary = analyticsService.computeSummary(datasetId);
+            var risk = analyticsService.risk(datasetId);
+            var drivers = analyticsService.topExpenseDrivers(datasetId, 12);
+            var forecast = analyticsService.forecastWeeklyNet(datasetId, horizon);
+            var weekly = analyticsService.computeWeeklySeries(datasetId);
+            String fallbackContextJson = objectMapper.writeValueAsString(Map.of(
+                    "datasetId", datasetId,
+                    "summary", summary,
+                    "risk", risk,
+                    "topExpenseDrivers", drivers,
+                    "forecastWeeklyNet", forecast,
+                    "weeklySeries", weekly
+            ));
+            AiAnswerResponse llmAnswer = aiInsightsService.answerQuestion(fallbackContextJson, question);
+            return new AiAnswerResponse(
+                    llmAnswer.answer(),
+                    llmAnswer.supportingPoints(),
+                    List.of(),
+                    "GROUNDING_FALLBACK_LLM"
+            );
         }
 
         String ragContextJson = objectMapper.writeValueAsString(Map.of(
