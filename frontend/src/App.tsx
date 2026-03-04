@@ -133,8 +133,14 @@ function buildTheme(mode: "light" | "dark") {
     },
     typography: {
       fontFamily: '"Inter", system-ui, sans-serif',
+      fontSize: 16,
       h4: { fontWeight: 700, letterSpacing: "-0.5px" },
       h6: { fontWeight: 600 },
+      body1: { fontSize: "1.02rem", lineHeight: 1.7 },
+      body2: { fontSize: "0.98rem", lineHeight: 1.65 },
+      subtitle1: { fontSize: "1.18rem" },
+      subtitle2: { fontSize: "1.02rem" },
+      caption: { fontSize: "0.88rem", lineHeight: 1.45 },
     },
     shape: { borderRadius: 16 },
     components: {
@@ -151,13 +157,29 @@ function buildTheme(mode: "light" | "dark") {
         },
       },
       MuiButton: {
-        styleOverrides: { root: { borderRadius: 10, textTransform: "none", fontWeight: 600, letterSpacing: "0.01em" } },
+        styleOverrides: {
+          root: {
+            borderRadius: 10,
+            textTransform: "none",
+            fontWeight: 600,
+            letterSpacing: "0.01em",
+            fontSize: "0.98rem",
+            paddingInline: "0.9rem",
+            paddingBlock: "0.48rem",
+          },
+        },
       },
       MuiChip: {
-        styleOverrides: { root: { borderRadius: 8, fontWeight: 500 } },
+        styleOverrides: { root: { borderRadius: 8, fontWeight: 600, fontSize: "0.82rem" } },
       },
       MuiLinearProgress: {
         styleOverrides: { root: { borderRadius: 99, height: 6 } },
+      },
+      MuiInputBase: {
+        styleOverrides: { input: { fontSize: "1.04rem" } },
+      },
+      MuiInputLabel: {
+        styleOverrides: { root: { fontSize: "0.96rem" } },
       },
     },
   });
@@ -867,7 +889,7 @@ export default function App() {
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
                       <XAxis dataKey="weekStart" hide />
-                      <YAxis tick={{ fill: "#334155", fontSize: 11 }} axisLine={false} tickLine={false}
+                      <YAxis tick={{ fill: "#334155", fontSize: 12 }} axisLine={false} tickLine={false}
                         tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}k`} />
                       <ReTooltip {...TOOLTIP} />
                       <Legend wrapperStyle={{ fontSize: 11, color: "#475569", paddingTop: 8 }} />
@@ -882,9 +904,9 @@ export default function App() {
                   <ResponsiveContainer width="100%" height={250}>
                     <BarChart data={drivers} layout="vertical" margin={{ left: 0, right: 8 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" horizontal={false} />
-                      <XAxis type="number" tick={{ fill: "#334155", fontSize: 11 }} axisLine={false} tickLine={false}
+                      <XAxis type="number" tick={{ fill: "#334155", fontSize: 12 }} axisLine={false} tickLine={false}
                         tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}k`} />
-                      <YAxis dataKey="category" type="category" tick={{ fill: "#64748b", fontSize: 11 }} width={80} axisLine={false} tickLine={false} />
+                      <YAxis dataKey="category" type="category" tick={{ fill: "#64748b", fontSize: 12 }} width={94} axisLine={false} tickLine={false} />
                       <ReTooltip {...TOOLTIP} />
                       <Bar dataKey="totalExpense" fill="#fb7185" radius={[0, 7, 7, 0]}
                         background={{ fill: "rgba(255,255,255,0.02)", radius: 7 }} />
@@ -900,7 +922,7 @@ export default function App() {
                     <LineChart data={chartForecast}>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
                       <XAxis dataKey="weekStart" hide />
-                      <YAxis tick={{ fill: "#334155", fontSize: 11 }} axisLine={false} tickLine={false}
+                      <YAxis tick={{ fill: "#334155", fontSize: 12 }} axisLine={false} tickLine={false}
                         tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}k`} />
                       <ReTooltip {...TOOLTIP} />
                       <Line type="monotone" dataKey="projectedNet" stroke="#818cf8" dot={false}
@@ -1078,9 +1100,23 @@ export default function App() {
                 <CardContent sx={{ p: 2.5 }}>
                   <Box sx={{ display: "grid", gap: 1.5 }}>
                     <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap">
-                      <Typography variant="caption" sx={{ color: "#818cf8", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                        Ask AI Chatbot
-                      </Typography>
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Box sx={{
+                          width: 30,
+                          height: 30,
+                          borderRadius: 1.5,
+                          display: "grid",
+                          placeItems: "center",
+                          fontSize: 16,
+                          background: "linear-gradient(135deg, rgba(99,102,241,0.25), rgba(129,140,248,0.35))",
+                          border: "1px solid rgba(129,140,248,0.35)",
+                        }}>
+                          🤖
+                        </Box>
+                        <Typography variant="caption" sx={{ color: "#818cf8", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 15 }}>
+                          Ask AI Chatbot
+                        </Typography>
+                      </Stack>
                       <Stack direction="row" spacing={1}>
                         <Chip label="RAG" size="small" sx={{ fontSize: 9, height: 18, bgcolor: alpha("#34d399", 0.1), color: "#34d399" }} />
                         <Chip label="LLM" size="small" sx={{ fontSize: 9, height: 18, bgcolor: alpha("#818cf8", 0.12), color: "#818cf8" }} />
