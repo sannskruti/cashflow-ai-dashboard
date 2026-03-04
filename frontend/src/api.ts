@@ -23,8 +23,31 @@ export type LoginResponse = {
 export type AskAnswerResponse = {
   answer: string;
   supportingPoints: string[];
-  retrievedContext: string[];
+  retrievedContext: {
+    id: number;
+    chunkType: string;
+    snippet: string;
+    similarity: number;
+    metadata: string;
+  }[];
   method: string;
+};
+
+export type TransactionRow = {
+  id: number;
+  date: string;
+  category: string;
+  description: string;
+  amount: number;
+  type: string;
+};
+
+export type TransactionPage = {
+  items: TransactionRow[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
 };
 
 export function getAuthToken(): string | null {
@@ -41,6 +64,20 @@ export function setAuthToken(token: string | null): void {
 
 export async function login(username: string, password: string): Promise<LoginResponse> {
   const res = await api.post("/api/auth/login", { username, password });
+  return res.data;
+}
+
+export async function signup(username: string, password: string, confirmPassword: string): Promise<{ username: string; message: string }> {
+  const res = await api.post("/api/auth/signup", { username, password, confirmPassword });
+  return res.data;
+}
+
+export async function forgotPassword(
+  username: string,
+  newPassword: string,
+  confirmPassword: string,
+): Promise<{ username: string; message: string }> {
+  const res = await api.post("/api/auth/forgot-password", { username, newPassword, confirmPassword });
   return res.data;
 }
 
@@ -90,6 +127,40 @@ export async function getForecast(id: number, horizon = 12) {
 export async function explain(id: number, horizon = 12) {
   return (await api.post(`/api/datasets/${id}/explain?horizon=${horizon}`))
     .data;
+}
+
+export async function getTransactionsPage(
+  id: number,
+  params: { page: number; size?: number; search?: string; type?: string; category?: string },
+): Promise<TransactionPage> {
+  const res = await api.get(`/api/datasets/${id}/transactions`, {
+    params: {
+      page: params.page,
+      size: params.size ?? 20,
+      search: params.search || undefined,
+      type: params.type || undefined,
+      category: params.category || undefined,
+    },
+  });
+  return res.data;
+}
+
+export async function getTransactionCategories(id: number): Promise<string[]> {
+  const res = await api.get(`/api/datasets/${id}/transactions/categories`);
+  return res.data;
+}
+
+export async function updateTransactionDescription(
+  id: number,
+  transactionId: number,
+  description: string,
+): Promise<TransactionRow> {
+  const res = await api.put(`/api/datasets/${id}/transactions/${transactionId}`, { description });
+  return res.data;
+}
+
+export async function deleteTransaction(id: number, transactionId: number): Promise<void> {
+  await api.delete(`/api/datasets/${id}/transactions/${transactionId}`);
 }
 
 export async function askFromInsights(id: number, question: string, horizon = 12): Promise<AskAnswerResponse> {

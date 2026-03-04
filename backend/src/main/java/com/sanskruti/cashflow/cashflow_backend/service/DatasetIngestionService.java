@@ -14,17 +14,27 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Service
 public class DatasetIngestionService {
 
-       private final DatasetRepository datasetRepository;
+    private static final Logger log = LoggerFactory.getLogger(DatasetIngestionService.class);
+
+    private final DatasetRepository datasetRepository;
     private final TransactionRepository transactionRepository;
+    private final AnalyticsService analyticsService;
+    private final AiRagService aiRagService;
 
     public DatasetIngestionService(DatasetRepository datasetRepository,
-                                   TransactionRepository transactionRepository) {
+                                   TransactionRepository transactionRepository,
+                                   AnalyticsService analyticsService,
+                                   AiRagService aiRagService) {
         this.datasetRepository = datasetRepository;
         this.transactionRepository = transactionRepository;
+        this.analyticsService = analyticsService;
+        this.aiRagService = aiRagService;
     }
 
     public Long ingestCsv(MultipartFile file, String datasetName) throws Exception {
@@ -56,6 +66,7 @@ public class DatasetIngestionService {
                 // expected columns: date,description,amount,type,category
                 LocalDate date = LocalDate.parse(r.get("date"));
                 String category = r.isMapped("category") ? r.get("category") : "uncategorized";
+                String description = r.isMapped("description") ? r.get("description") : "";
                 String type = r.get("type").trim().toUpperCase(); // INCOME / EXPENSE
                 double amount = Double.parseDouble(r.get("amount"));
 
@@ -65,6 +76,7 @@ public class DatasetIngestionService {
                 Transaction tx = Transaction.builder()
                         .date(date)
                         .category(category)
+                        .description(description)
                         .type(type)
                         .amount(amount)
                         .dataset(dataset)
@@ -75,6 +87,17 @@ public class DatasetIngestionService {
         }
 
         transactionRepository.saveAll(txs);
+        try {
+            Long datasetId = dataset.getId();
+            var summary = analyticsService.computeSummary(datasetId);
+            var risk = analyticsService.risk(datasetId);
+            var drivers = analyticsService.topExpenseDrivers(datasetId, 12);
+            var forecast = analyticsService.forecastWeeklyNet(datasetId, 12);
+            var weekly = analyticsService.computeWeeklySeries(datasetId);
+            aiRagService.indexDataset(datasetId, summary, risk, drivers, forecast, weekly);
+        } catch (Exception e) {
+            log.warn("Chunk indexing failed for dataset {}: {}", dataset.getId(), e.getMessage());
+        }
         return dataset.getId();
     }
     

@@ -18,6 +18,20 @@ import {
   Divider,
   Paper,
   alpha,
+  Tabs,
+  Tab,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Pagination,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  MenuItem,
 } from "@mui/material";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip as ReTooltip,
@@ -32,12 +46,19 @@ import {
   getForecast,
   explain,
   login as loginApi,
+  signup as signupApi,
+  forgotPassword as forgotPasswordApi,
   logout as logoutApi,
   whoAmI,
   getAuthToken,
   setAuthToken,
   askFromInsights,
+  getTransactionsPage,
+  getTransactionCategories,
+  updateTransactionDescription,
+  deleteTransaction,
 } from "./api";
+import type { TransactionRow, TransactionPage } from "./api";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -61,7 +82,13 @@ type AuthUser = { username: string };
 type ChatAnswer = {
   answer: string;
   supportingPoints: string[];
-  retrievedContext: string[];
+  retrievedContext: {
+    id: number;
+    chunkType: string;
+    snippet: string;
+    similarity: number;
+    metadata: string;
+  }[];
   method: string;
 };
 
@@ -279,10 +306,20 @@ export default function App() {
   const [authReady, setAuthReady]   = useState(false);
   const [authUser, setAuthUser]     = useState<AuthUser | null>(null);
   const [showIntroWallpaper, setShowIntroWallpaper] = useState(true);
+  const [authView, setAuthView] = useState<"login" | "signup" | "forgot">("login");
   const [loginUsername, setLoginUsername] = useState("demo@cashflow.ai");
-  const [loginPassword, setLoginPassword] = useState("password123");
+  const [loginPassword, setLoginPassword] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
+  const [signupUsername, setSignupUsername] = useState("");
+  const [signupPassword, setSignupPassword] = useState("");
+  const [signupConfirmPassword, setSignupConfirmPassword] = useState("");
+  const [signupLoading, setSignupLoading] = useState(false);
+  const [forgotUsername, setForgotUsername] = useState("");
+  const [forgotPassword, setForgotPassword] = useState("");
+  const [forgotConfirmPassword, setForgotConfirmPassword] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
   const [datasetId, setDatasetId]   = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState<"dashboard" | "transactions">("dashboard");
   const [loading,   setLoading]     = useState(false);
   const [aiLoading, setAiLoading]   = useState(false);
   const [summary,   setSummary]     = useState<Summary | null>(null);
@@ -295,8 +332,20 @@ export default function App() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatListening, setChatListening] = useState(false);
   const [chatAnswer, setChatAnswer] = useState<ChatAnswer | null>(null);
+  const [selectedSourceIndex, setSelectedSourceIndex] = useState<number | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
   const [error,     setError]       = useState<string | null>(null);
+  const [transactionsPage, setTransactionsPage] = useState<TransactionPage | null>(null);
+  const [transactionPageIndex, setTransactionPageIndex] = useState(1);
+  const [transactionSearch, setTransactionSearch] = useState("");
+  const [transactionSearchInput, setTransactionSearchInput] = useState("");
+  const [transactionTypeFilter, setTransactionTypeFilter] = useState("");
+  const [transactionCategoryFilter, setTransactionCategoryFilter] = useState("");
+  const [transactionCategories, setTransactionCategories] = useState<string[]>([]);
+  const [transactionsLoading, setTransactionsLoading] = useState(false);
+  const [selectedTransaction, setSelectedTransaction] = useState<TransactionRow | null>(null);
+  const [editDescription, setEditDescription] = useState("");
+  const [transactionActionLoading, setTransactionActionLoading] = useState(false);
 
   const chartWeekly   = useMemo(() => weekly.map((w) => ({ ...w })), [weekly]);
   const chartForecast = useMemo(() => forecast.map((f) => ({ ...f })), [forecast]);
@@ -329,7 +378,18 @@ export default function App() {
     void initAuth();
   }, []);
 
+  useEffect(() => {
+    if (!datasetId) return;
+    void loadTransactionCategories(datasetId);
+  }, [datasetId]);
+
+  useEffect(() => {
+    if (!datasetId) return;
+    void loadTransactions(datasetId, transactionPageIndex);
+  }, [datasetId, transactionPageIndex, transactionSearch, transactionTypeFilter, transactionCategoryFilter]);
+
   function resetDashboard() {
+    setActiveTab("dashboard");
     setShowIntroWallpaper(true);
     setDatasetId(null);
     setSummary(null);
@@ -340,7 +400,17 @@ export default function App() {
     setAi(null);
     setChatQuestion("");
     setChatAnswer(null);
+    setSelectedSourceIndex(null);
     setChatError(null);
+    setTransactionsPage(null);
+    setTransactionPageIndex(1);
+    setTransactionSearch("");
+    setTransactionSearchInput("");
+    setTransactionTypeFilter("");
+    setTransactionCategoryFilter("");
+    setTransactionCategories([]);
+    setSelectedTransaction(null);
+    setEditDescription("");
     setError(null);
   }
 
@@ -356,6 +426,52 @@ export default function App() {
       setError(axiosMsg(e, "Login failed"));
     } finally {
       setLoginLoading(false);
+    }
+  }
+
+  async function onSignup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    if (signupPassword !== signupConfirmPassword) {
+      setError("Passwords do not match");
+      return;
+    }
+    setSignupLoading(true);
+    try {
+      await signupApi(signupUsername.trim(), signupPassword, signupConfirmPassword);
+      setLoginUsername(signupUsername.trim());
+      setLoginPassword("");
+      setSignupPassword("");
+      setSignupConfirmPassword("");
+      setAuthView("login");
+      setError("Account created. Please sign in.");
+    } catch (e: unknown) {
+      setError(axiosMsg(e, "Signup failed"));
+    } finally {
+      setSignupLoading(false);
+    }
+  }
+
+  async function onForgotPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    if (forgotPassword !== forgotConfirmPassword) {
+      setError("Passwords do not match");
+      return;
+    }
+    setForgotLoading(true);
+    try {
+      await forgotPasswordApi(forgotUsername.trim(), forgotPassword, forgotConfirmPassword);
+      setLoginUsername(forgotUsername.trim());
+      setLoginPassword("");
+      setForgotPassword("");
+      setForgotConfirmPassword("");
+      setAuthView("login");
+      setError("Password updated. Please sign in.");
+    } catch (e: unknown) {
+      setError(axiosMsg(e, "Password reset failed"));
+    } finally {
+      setForgotLoading(false);
     }
   }
 
@@ -388,12 +504,42 @@ export default function App() {
     } finally { setLoading(false); }
   }
 
+  async function loadTransactions(id: number, page = transactionPageIndex) {
+    setTransactionsLoading(true);
+    try {
+      const data = await getTransactionsPage(id, {
+        page: page - 1,
+        size: 20,
+        search: transactionSearch || undefined,
+        type: transactionTypeFilter || undefined,
+        category: transactionCategoryFilter || undefined,
+      });
+      setTransactionsPage(data);
+    } catch (e: unknown) {
+      setError(axiosMsg(e, "Failed to load transactions"));
+    } finally {
+      setTransactionsLoading(false);
+    }
+  }
+
+  async function loadTransactionCategories(id: number) {
+    try {
+      const categories = await getTransactionCategories(id);
+      setTransactionCategories(categories);
+    } catch {
+      setTransactionCategories([]);
+    }
+  }
+
   async function onUpload(file: File) {
     setError(null); setLoading(true);
     try {
       const ds = await uploadCsv(file);
       setDatasetId(ds.datasetId);
       await loadAll(ds.datasetId);
+      await loadTransactionCategories(ds.datasetId);
+      await loadTransactions(ds.datasetId, 1);
+      setTransactionPageIndex(1);
     } catch (e: unknown) {
       setError(axiosMsg(e, "Upload failed"));
     } finally { setLoading(false); }
@@ -406,6 +552,7 @@ export default function App() {
       setAi(await explain(datasetId, 12));
       setChatQuestion("");
       setChatAnswer(null);
+      setSelectedSourceIndex(null);
       setChatError(null);
     }
     catch (e: unknown) { setError(axiosMsg(e, "AI explain failed")); }
@@ -464,10 +611,69 @@ export default function App() {
     try {
       const answer = await askFromInsights(datasetId, question, 12);
       setChatAnswer(answer);
+      setSelectedSourceIndex(answer.retrievedContext.length ? 0 : null);
     } catch (e: unknown) {
       setChatError(axiosMsg(e, "Failed to get AI answer"));
     } finally {
       setChatLoading(false);
+    }
+  }
+
+  function onApplyTransactionSearch() {
+    setTransactionPageIndex(1);
+    setTransactionSearch(transactionSearchInput.trim());
+  }
+
+  function onOpenTransaction(tx: TransactionRow) {
+    setSelectedTransaction(tx);
+    setEditDescription(tx.description ?? "");
+  }
+
+  function onCloseTransactionDialog() {
+    if (transactionActionLoading) return;
+    setSelectedTransaction(null);
+  }
+
+  async function onSaveTransaction() {
+    if (!datasetId || !selectedTransaction) return;
+    setTransactionActionLoading(true);
+    setError(null);
+    try {
+      const updated = await updateTransactionDescription(datasetId, selectedTransaction.id, editDescription);
+      setSelectedTransaction(updated);
+      setTransactionsPage((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          items: prev.items.map((item) => (item.id === updated.id ? updated : item)),
+        };
+      });
+    } catch (e: unknown) {
+      setError(axiosMsg(e, "Failed to update transaction"));
+    } finally {
+      setTransactionActionLoading(false);
+    }
+  }
+
+  async function onDeleteTransaction() {
+    if (!datasetId || !selectedTransaction) return;
+    setTransactionActionLoading(true);
+    setError(null);
+    try {
+      await deleteTransaction(datasetId, selectedTransaction.id);
+      setSelectedTransaction(null);
+      const currentPage = transactionPageIndex;
+      const nextExpectedCount = (transactionsPage?.items.length ?? 1) - 1;
+      const nextPage = nextExpectedCount <= 0 && currentPage > 1 ? currentPage - 1 : currentPage;
+      if (nextPage !== currentPage) {
+        setTransactionPageIndex(nextPage);
+      } else {
+        await loadTransactions(datasetId, nextPage);
+      }
+    } catch (e: unknown) {
+      setError(axiosMsg(e, "Failed to delete transaction"));
+    } finally {
+      setTransactionActionLoading(false);
     }
   }
 
@@ -583,7 +789,9 @@ export default function App() {
             }}>
             <CardContent sx={{ p: { xs: 3.5, sm: 4.5 } }}>
               <Typography sx={{ mt: 0.4, color: "#64748b", fontSize: 19, lineHeight: 1.55 }}>
-                Sign in to continue to your executive cashflow control center.
+                {authView === "login" && "Sign in to continue to your executive cashflow control center."}
+                {authView === "signup" && "Create your account and then sign in to access your dashboard."}
+                {authView === "forgot" && "Reset your password, then sign in with your new credentials."}
               </Typography>
               <Stack direction="row" spacing={1} sx={{ mt: 2.25, mb: 3 }}>
                 <Chip label="Enterprise-grade insights" size="small" sx={{
@@ -599,67 +807,114 @@ export default function App() {
                   borderColor: alpha("#34d399", 0.3),
                 }} />
               </Stack>
+              <Stack direction="row" spacing={1} sx={{ mb: 2.5, flexWrap: "wrap" }}>
+                <Button
+                  size="small"
+                  variant={authView === "login" ? "contained" : "outlined"}
+                  onClick={() => setAuthView("login")}
+                >
+                  Sign in
+                </Button>
+                <Button
+                  size="small"
+                  variant={authView === "signup" ? "contained" : "outlined"}
+                  onClick={() => setAuthView("signup")}
+                >
+                  Sign up
+                </Button>
+                <Button
+                  size="small"
+                  variant={authView === "forgot" ? "contained" : "outlined"}
+                  onClick={() => setAuthView("forgot")}
+                >
+                  Forgot password
+                </Button>
+              </Stack>
               {error && (
                 <Alert severity="error" sx={{ mb: 2 }}>
                   {error}
                 </Alert>
               )}
-              <Box component="form" onSubmit={onLogin} sx={{ display: "grid", gap: 2.25 }}>
-                <TextField
-                  label="Username"
-                  size="small"
-                  value={loginUsername}
-                  onChange={(e) => setLoginUsername(e.target.value)}
-                  autoComplete="username"
-                  sx={{
-                    "& .MuiOutlinedInput-root": {
+              {authView === "login" && (
+                <Box component="form" onSubmit={onLogin} sx={{ display: "grid", gap: 2.25 }}>
+                  <TextField
+                    label="Username"
+                    size="small"
+                    value={loginUsername}
+                    onChange={(e) => setLoginUsername(e.target.value)}
+                    autoComplete="off"
+                    sx={{
+                      "& .MuiOutlinedInput-root": {
+                        fontSize: 20,
+                        borderRadius: 2,
+                        bgcolor: "rgba(255,255,255,0.01)",
+                      },
+                      "& .MuiInputLabel-root": { fontSize: 17 },
+                    }}
+                  />
+                  <TextField
+                    label="Password"
+                    size="small"
+                    type="password"
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    autoComplete="new-password"
+                    sx={{
+                      "& .MuiOutlinedInput-root": {
+                        fontSize: 20,
+                        borderRadius: 2,
+                        bgcolor: "rgba(255,255,255,0.01)",
+                      },
+                      "& .MuiInputLabel-root": { fontSize: 17 },
+                    }}
+                  />
+                  <Button
+                    type="submit"
+                    variant="contained"
+                    disabled={loginLoading}
+                    sx={{
+                      mt: 1,
+                      py: 1.35,
                       fontSize: 20,
-                      borderRadius: 2,
-                      bgcolor: "rgba(255,255,255,0.01)",
-                    },
-                    "& .MuiInputLabel-root": { fontSize: 17 },
-                  }}
-                />
-                <TextField
-                  label="Password"
-                  size="small"
-                  type="password"
-                  value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
-                  autoComplete="current-password"
-                  sx={{
-                    "& .MuiOutlinedInput-root": {
-                      fontSize: 20,
-                      borderRadius: 2,
-                      bgcolor: "rgba(255,255,255,0.01)",
-                    },
-                    "& .MuiInputLabel-root": { fontSize: 17 },
-                  }}
-                />
-                <Button
-                  type="submit"
-                  variant="contained"
-                  disabled={loginLoading}
-                  sx={{
-                    mt: 1,
-                    py: 1.35,
-                    fontSize: 20,
-                    fontWeight: 700,
-                    borderRadius: 2.5,
-                    letterSpacing: "0.01em",
-                    background: "linear-gradient(135deg, #818cf8 0%, #6366f1 60%, #4f46e5 100%)",
-                    boxShadow: "0 12px 30px rgba(99,102,241,0.4)",
-                    transition: "transform 160ms ease, box-shadow 160ms ease",
-                    "&:hover": {
-                      transform: "translateY(-1px)",
-                      boxShadow: "0 14px 36px rgba(99,102,241,0.55)",
-                    },
-                  }}
-                >
-                  {loginLoading && <CircularProgress size={14} sx={{ mr: 1, color: "inherit" }} />}
-                  {loginLoading ? "Signing in…" : "Sign in"}
-                </Button>
-              </Box>
+                      fontWeight: 700,
+                      borderRadius: 2.5,
+                      letterSpacing: "0.01em",
+                      background: "linear-gradient(135deg, #818cf8 0%, #6366f1 60%, #4f46e5 100%)",
+                      boxShadow: "0 12px 30px rgba(99,102,241,0.4)",
+                      transition: "transform 160ms ease, box-shadow 160ms ease",
+                      "&:hover": {
+                        transform: "translateY(-1px)",
+                        boxShadow: "0 14px 36px rgba(99,102,241,0.55)",
+                      },
+                    }}
+                  >
+                    {loginLoading && <CircularProgress size={14} sx={{ mr: 1, color: "inherit" }} />}
+                    {loginLoading ? "Signing in…" : "Sign in"}
+                  </Button>
+                </Box>
+              )}
+
+              {authView === "signup" && (
+                <Box component="form" onSubmit={onSignup} sx={{ display: "grid", gap: 2.25 }}>
+                  <TextField label="Email / Username" size="small" value={signupUsername} onChange={(e) => setSignupUsername(e.target.value)} autoComplete="off" />
+                  <TextField label="Password" size="small" type="password" value={signupPassword} onChange={(e) => setSignupPassword(e.target.value)} autoComplete="new-password" />
+                  <TextField label="Confirm Password" size="small" type="password" value={signupConfirmPassword} onChange={(e) => setSignupConfirmPassword(e.target.value)} autoComplete="new-password" />
+                  <Button type="submit" variant="contained" disabled={signupLoading} sx={{ mt: 1, py: 1.15, fontSize: 18, fontWeight: 700 }}>
+                    {signupLoading ? "Creating account…" : "Create account"}
+                  </Button>
+                </Box>
+              )}
+
+              {authView === "forgot" && (
+                <Box component="form" onSubmit={onForgotPassword} sx={{ display: "grid", gap: 2.25 }}>
+                  <TextField label="Email / Username" size="small" value={forgotUsername} onChange={(e) => setForgotUsername(e.target.value)} autoComplete="off" />
+                  <TextField label="New Password" size="small" type="password" value={forgotPassword} onChange={(e) => setForgotPassword(e.target.value)} autoComplete="new-password" />
+                  <TextField label="Confirm New Password" size="small" type="password" value={forgotConfirmPassword} onChange={(e) => setForgotConfirmPassword(e.target.value)} autoComplete="new-password" />
+                  <Button type="submit" variant="contained" disabled={forgotLoading} sx={{ mt: 1, py: 1.15, fontSize: 18, fontWeight: 700 }}>
+                    {forgotLoading ? "Updating…" : "Update password"}
+                  </Button>
+                </Box>
+              )}
             </CardContent>
           </Card>
           </Box>
@@ -860,6 +1115,24 @@ export default function App() {
 
           {summary && (
             <>
+              <Card sx={{ mb: 3, background: "rgba(10,16,28,0.6)", border: "1px solid rgba(129,140,248,0.16)" }}>
+                <CardContent sx={{ p: 1.25 }}>
+                  <Tabs
+                    value={activeTab}
+                    onChange={(_, value: "dashboard" | "transactions") => setActiveTab(value)}
+                    sx={{
+                      minHeight: 42,
+                      "& .MuiTab-root": { minHeight: 42, textTransform: "none", fontWeight: 700, fontSize: 16 },
+                    }}
+                  >
+                    <Tab value="dashboard" label="Dashboard" />
+                    <Tab value="transactions" label="Transactions" />
+                  </Tabs>
+                </CardContent>
+              </Card>
+
+              {activeTab === "dashboard" && (
+                <>
               {/* ── KPI Row ── */}
               <Box sx={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 2, mb: 3 }}>
                 <KpiCard title="Total Income"   value={fmtUSD(summary.totalIncome)}   accent="#34d399" symbol="↑" />
@@ -1171,47 +1444,220 @@ export default function App() {
 
                     {chatAnswer && (
                       <Paper sx={{ mt: 0.5, p: 2, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(129,140,248,0.15)" }}>
+                        {(() => {
+                          const hasSimilarity = chatAnswer.retrievedContext.some((s) => s.similarity > 0);
+                          return (
+                            <>
                         <Typography variant="body2" sx={{ color: "#e2e8f0", lineHeight: 1.75 }}>
                           {chatAnswer.answer}
                         </Typography>
 
-                        {!!chatAnswer.supportingPoints?.length && (
-                          <Box sx={{ mt: 1.5 }}>
-                            <Typography variant="caption" sx={{ color: "#818cf8", fontWeight: 700 }}>Supporting Points</Typography>
-                            <Stack spacing={0.7} sx={{ mt: 0.7 }}>
-                              {chatAnswer.supportingPoints.map((point, idx) => (
-                                <Typography key={idx} variant="caption" sx={{ color: "#94a3b8", lineHeight: 1.6 }}>
-                                  • {point}
-                                </Typography>
-                              ))}
-                            </Stack>
-                          </Box>
-                        )}
-
                         {!!chatAnswer.retrievedContext?.length && (
                           <Box sx={{ mt: 1.5 }}>
                             <Typography variant="caption" sx={{ color: "#34d399", fontWeight: 700 }}>
-                              Retrieved Context ({chatAnswer.method})
+                              Retrieved Sources ({chatAnswer.method})
                             </Typography>
+
+                            {hasSimilarity && (
+                              <Typography variant="caption" sx={{ display: "block", mt: 1, color: "#818cf8", fontWeight: 700 }}>
+                                Search Quality (Top-K Similarity)
+                              </Typography>
+                            )}
                             <Stack spacing={0.7} sx={{ mt: 0.7 }}>
-                              {chatAnswer.retrievedContext.map((ctx, idx) => (
-                                <Typography key={idx} variant="caption" sx={{ color: "#64748b", lineHeight: 1.6 }}>
-                                  {idx + 1}. {ctx}
-                                </Typography>
+                              {chatAnswer.retrievedContext.map((src, idx) => (
+                                <Box key={src.id}>
+                                  <Button
+                                    size="small"
+                                    variant={selectedSourceIndex === idx ? "contained" : "outlined"}
+                                    onClick={() => setSelectedSourceIndex(idx)}
+                                    sx={{ mr: 1, mb: 0.5, textTransform: "none" }}
+                                  >
+                                    [{idx + 1}] {src.chunkType}
+                                  </Button>
+                                  {hasSimilarity && (
+                                    <>
+                                      <Typography component="span" variant="caption" sx={{ color: "#94a3b8" }}>
+                                        {(src.similarity * 100).toFixed(1)}%
+                                      </Typography>
+                                      <LinearProgress
+                                        variant="determinate"
+                                        value={Math.max(0, Math.min(100, src.similarity * 100))}
+                                        sx={{ mt: 0.5, height: 7, borderRadius: 99 }}
+                                      />
+                                    </>
+                                  )}
+                                </Box>
                               ))}
                             </Stack>
+
+                            {selectedSourceIndex !== null && chatAnswer.retrievedContext[selectedSourceIndex] && (
+                              <Paper sx={{ mt: 1.25, p: 1.25, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                                <Typography variant="caption" sx={{ color: "#e2e8f0", lineHeight: 1.7, display: "block" }}>
+                                  {chatAnswer.retrievedContext[selectedSourceIndex].snippet}
+                                </Typography>
+                              </Paper>
+                            )}
                           </Box>
                         )}
+                            </>
+                          );
+                        })()}
                       </Paper>
                     )}
                   </Box>
                 </CardContent>
               </Card>
               </Box>
+                </>
+              )}
+
+              {activeTab === "transactions" && (
+                <Card sx={{ background: "rgba(10,16,28,0.7)", border: "1px solid rgba(129,140,248,0.16)" }}>
+                  <CardContent sx={{ p: 2.5 }}>
+                    <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} sx={{ mb: 2 }} alignItems={{ xs: "stretch", md: "center" }}>
+                      <TextField
+                        fullWidth
+                        label="Search Description"
+                        value={transactionSearchInput}
+                        onChange={(e) => setTransactionSearchInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            onApplyTransactionSearch();
+                          }
+                        }}
+                        helperText="Search by description, category, or type"
+                      />
+                      <TextField
+                        select
+                        label="Type"
+                        value={transactionTypeFilter}
+                        onChange={(e) => {
+                          setTransactionPageIndex(1);
+                          setTransactionTypeFilter(e.target.value);
+                        }}
+                        sx={{ minWidth: 170 }}
+                      >
+                        <MenuItem value="">All</MenuItem>
+                        <MenuItem value="INCOME">INCOME</MenuItem>
+                        <MenuItem value="EXPENSE">EXPENSE</MenuItem>
+                      </TextField>
+                      <TextField
+                        select
+                        label="Category"
+                        value={transactionCategoryFilter}
+                        onChange={(e) => {
+                          setTransactionPageIndex(1);
+                          setTransactionCategoryFilter(e.target.value);
+                        }}
+                        sx={{ minWidth: 220 }}
+                      >
+                        <MenuItem value="">All</MenuItem>
+                        {transactionCategories.map((category) => (
+                          <MenuItem key={category} value={category}>{category}</MenuItem>
+                        ))}
+                      </TextField>
+                      <Button variant="contained" onClick={onApplyTransactionSearch} sx={{ minWidth: 120 }}>
+                        Search
+                      </Button>
+                    </Stack>
+
+                    <TableContainer component={Paper} sx={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(129,140,248,0.16)" }}>
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Date</TableCell>
+                            <TableCell>Type</TableCell>
+                            <TableCell>Category</TableCell>
+                            <TableCell>Description</TableCell>
+                            <TableCell align="right">Amount</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {transactionsLoading && (
+                            <TableRow>
+                              <TableCell colSpan={5}>
+                                <LinearProgress />
+                              </TableCell>
+                            </TableRow>
+                          )}
+                          {!transactionsLoading && transactionsPage?.items.length === 0 && (
+                            <TableRow>
+                              <TableCell colSpan={5}>
+                                <Typography variant="body2" sx={{ color: "#94a3b8", py: 1 }}>
+                                  No transactions found for this filter.
+                                </Typography>
+                              </TableCell>
+                            </TableRow>
+                          )}
+                          {transactionsPage?.items.map((tx) => (
+                            <TableRow
+                              key={tx.id}
+                              hover
+                              sx={{ cursor: "pointer" }}
+                              onClick={() => onOpenTransaction(tx)}
+                            >
+                              <TableCell>{tx.date}</TableCell>
+                              <TableCell>{tx.type}</TableCell>
+                              <TableCell>{tx.category || "-"}</TableCell>
+                              <TableCell>{tx.description || "-"}</TableCell>
+                              <TableCell align="right">{fmtFull(tx.amount)}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+
+                    <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 2 }}>
+                      <Typography variant="caption" sx={{ color: "#64748b" }}>
+                        {transactionsPage ? `Showing ${transactionsPage.items.length} of ${transactionsPage.totalElements} records` : "No records"}
+                      </Typography>
+                      <Pagination
+                        page={transactionPageIndex}
+                        count={Math.max(1, transactionsPage?.totalPages ?? 1)}
+                        onChange={(_, value) => setTransactionPageIndex(value)}
+                        color="primary"
+                        shape="rounded"
+                      />
+                    </Stack>
+                  </CardContent>
+                </Card>
+              )}
             </>
           )}
         </Box>
       </Box>
+
+      <Dialog open={!!selectedTransaction} onClose={onCloseTransactionDialog} fullWidth maxWidth="sm">
+        <DialogTitle>Transaction Detail</DialogTitle>
+        <DialogContent sx={{ pt: "8px !important" }}>
+          {selectedTransaction && (
+            <Stack spacing={1.5}>
+              <Typography variant="body2"><strong>ID:</strong> {selectedTransaction.id}</Typography>
+              <Typography variant="body2"><strong>Date:</strong> {selectedTransaction.date}</Typography>
+              <Typography variant="body2"><strong>Type:</strong> {selectedTransaction.type}</Typography>
+              <Typography variant="body2"><strong>Category:</strong> {selectedTransaction.category || "-"}</Typography>
+              <Typography variant="body2"><strong>Amount:</strong> {fmtFull(selectedTransaction.amount)}</Typography>
+              <TextField
+                label="Description"
+                multiline
+                minRows={3}
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+              />
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={onCloseTransactionDialog} disabled={transactionActionLoading}>Close</Button>
+          <Button color="error" onClick={onDeleteTransaction} disabled={transactionActionLoading || !selectedTransaction}>
+            Delete
+          </Button>
+          <Button variant="contained" onClick={onSaveTransaction} disabled={transactionActionLoading || !selectedTransaction}>
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
     </ThemeProvider>
   );
 }

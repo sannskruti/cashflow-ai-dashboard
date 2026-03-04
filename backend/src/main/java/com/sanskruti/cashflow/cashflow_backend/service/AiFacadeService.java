@@ -3,6 +3,8 @@ package com.sanskruti.cashflow.cashflow_backend.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sanskruti.cashflow.cashflow_backend.api.dto.AiAnswerResponse;
 import com.sanskruti.cashflow.cashflow_backend.api.dto.AiInsightsResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
@@ -12,6 +14,8 @@ import java.util.Map;
 
 @Service
 public class AiFacadeService {
+
+    private static final Logger log = LoggerFactory.getLogger(AiFacadeService.class);
 
     private final AnalyticsService analyticsService;
     private final AiInsightsService aiInsightsService;
@@ -44,28 +48,51 @@ public class AiFacadeService {
         payload.put("forecastWeeklyNet", forecast);
 
         String groundedJson = objectMapper.writeValueAsString(payload);
-        return aiInsightsService.generateInsights(groundedJson);
+        AiInsightsResponse insights = aiInsightsService.generateInsights(groundedJson);
+        try {
+            aiRagService.appendInsights(datasetId, insights);
+        } catch (Exception e) {
+            log.warn("Failed to append insight chunks for dataset {}: {}", datasetId, e.getMessage());
+        }
+        return insights;
     }
 
     public AiAnswerResponse askFromInsights(Long datasetId, int horizon, String question) throws Exception {
-        var summary = analyticsService.computeSummary(datasetId);
-        var risk = analyticsService.risk(datasetId);
-        var drivers = analyticsService.topExpenseDrivers(datasetId, 5);
-        var forecast = analyticsService.forecastWeeklyNet(datasetId, horizon);
-        var insights = explainCached(datasetId, horizon);
+        List<DocumentChunkService.RetrievedSource> retrievedContext = aiRagService.retrieveContext(datasetId, question, 5);
+        if (retrievedContext.isEmpty()) {
+            var summary = analyticsService.computeSummary(datasetId);
+            var risk = analyticsService.risk(datasetId);
+            var drivers = analyticsService.topExpenseDrivers(datasetId, 12);
+            var forecast = analyticsService.forecastWeeklyNet(datasetId, 12);
+            var weekly = analyticsService.computeWeeklySeries(datasetId);
+            aiRagService.indexDataset(datasetId, summary, risk, drivers, forecast, weekly);
+            retrievedContext = aiRagService.retrieveContext(datasetId, question, 5);
+        }
 
-        List<String> retrievedContext = aiRagService.retrieveContext(
-                datasetId, summary, risk, drivers, forecast, insights, question, 4);
+        if (retrievedContext.isEmpty()) {
+            throw new IllegalArgumentException("No indexed context found for this dataset. Please regenerate insights and retry.");
+        }
 
         String ragContextJson = objectMapper.writeValueAsString(Map.of(
-                "retrievedContext", retrievedContext
+                "retrievedContext", retrievedContext.stream().map(DocumentChunkService.RetrievedSource::chunkText).toList()
         ));
         AiAnswerResponse llmAnswer = aiInsightsService.answerQuestion(ragContextJson, question);
         return new AiAnswerResponse(
                 llmAnswer.answer(),
                 llmAnswer.supportingPoints(),
-                retrievedContext,
+                retrievedContext.stream().map(r -> new AiAnswerResponse.RetrievedSource(
+                        r.id(),
+                        r.chunkType(),
+                        fullText(r.chunkText()),
+                        r.similarity(),
+                        r.metadata()
+                )).toList(),
                 "RAG+LLM"
         );
+    }
+
+    private String fullText(String text) {
+        if (text == null) return "";
+        return text.trim();
     }
 }

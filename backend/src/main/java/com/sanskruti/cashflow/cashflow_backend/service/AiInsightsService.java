@@ -16,6 +16,7 @@ import reactor.core.publisher.Mono;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.ArrayList;
 
 @Service
 public class AiInsightsService {
@@ -27,19 +28,21 @@ public class AiInsightsService {
     private final ObjectMapper objectMapper;
     private final String model;
     private final String embeddingModel;
+    private final boolean aiEnabled;
 
     public AiInsightsService(
             ObjectMapper objectMapper,
-            @Value("${ai.openai.apiKey}") String apiKey,
+            @Value("${ai.openai.apiKey:}") String apiKey,
             @Value("${ai.openai.model}") String model,
             @Value("${ai.openai.embeddingModel:text-embedding-3-small}") String embeddingModel
     ) {
         this.objectMapper = objectMapper;
         this.model = model;
         this.embeddingModel = embeddingModel;
+        this.aiEnabled = apiKey != null && !apiKey.isBlank();
 
         ExchangeStrategies exchangeStrategies = ExchangeStrategies.builder()
-                .codecs(c -> c.defaultCodecs().maxInMemorySize(2 * 1024 * 1024))
+                .codecs(c -> c.defaultCodecs().maxInMemorySize(8 * 1024 * 1024))
                 .build();
 
         this.webClient = WebClient.builder()
@@ -52,6 +55,7 @@ public class AiInsightsService {
     }
 
     public AiInsightsResponse generateInsights(String groundedJson) throws Exception {
+        ensureAiEnabled();
 
         String system = """
                 You are a financial risk analyst.
@@ -131,6 +135,7 @@ public class AiInsightsService {
     }
 
     public AiAnswerResponse answerQuestion(String groundedJson, String question) throws Exception {
+        ensureAiEnabled();
         String system = """
                 You are a financial assistant for a cashflow dashboard.
                 Answer ONLY using the retrieved context chunks.
@@ -205,7 +210,7 @@ public class AiInsightsService {
         }
 
         try {
-            AiAnswerResponse parsed = objectMapper.readValue(content, AiAnswerResponse.class);
+            LlmAnswerPayload parsed = objectMapper.readValue(content, LlmAnswerPayload.class);
             return new AiAnswerResponse(
                     parsed.answer(),
                     parsed.supportingPoints(),
@@ -219,9 +224,27 @@ public class AiInsightsService {
     }
 
     public List<List<Double>> embedTexts(List<String> texts) {
+        ensureAiEnabled();
+        if (texts == null || texts.isEmpty()) {
+            return List.of();
+        }
+
+        final int batchSize = 24;
+        List<List<Double>> out = new ArrayList<>();
+        for (int i = 0; i < texts.size(); i += batchSize) {
+            int end = Math.min(i + batchSize, texts.size());
+            List<String> batch = texts.subList(i, end).stream()
+                    .map(this::trimForEmbedding)
+                    .toList();
+            out.addAll(embedBatch(batch));
+        }
+        return out;
+    }
+
+    private List<List<Double>> embedBatch(List<String> inputs) {
         Map<String, Object> body = Map.of(
                 "model", embeddingModel,
-                "input", texts
+                "input", inputs
         );
 
         Map<?, ?> resp = webClient.post()
@@ -264,4 +287,22 @@ public class AiInsightsService {
         }
         return vectors;
     }
+
+    private String trimForEmbedding(String text) {
+        if (text == null) return "";
+        String t = text.trim();
+        int max = 900;
+        return t.length() <= max ? t : t.substring(0, max);
+    }
+
+    private void ensureAiEnabled() {
+        if (!aiEnabled) {
+            throw new ResponseStatusException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "AI features are disabled. Set OPENAI_API_KEY to enable AI insights and chatbot."
+            );
+        }
+    }
+
+    private record LlmAnswerPayload(String answer, List<String> supportingPoints) {}
 }

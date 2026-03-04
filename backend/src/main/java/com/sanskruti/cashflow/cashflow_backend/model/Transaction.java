@@ -19,6 +19,9 @@ public class Transaction {
 
     private String category;
 
+    @Column(length = 2000)
+    private String description;
+
     private Double amount;
 
     private String type; // INCOME or EXPENSE

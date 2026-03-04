@@ -14,6 +14,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 
+import static org.springframework.http.HttpStatus.CONFLICT;
+import static org.springframework.http.HttpStatus.NOT_FOUND;
 import static org.springframework.http.HttpStatus.UNAUTHORIZED;
 
 @RestController
@@ -31,6 +33,30 @@ public class AuthController {
         AuthService.LoginResult result = authService.login(request.username(), request.password())
                 .orElseThrow(() -> new ResponseStatusException(UNAUTHORIZED, "Invalid username or password"));
         return new LoginResponse(result.token(), result.username(), result.expiresAt());
+    }
+
+    @PostMapping("/signup")
+    public SignupResponse signup(@Valid @RequestBody SignupRequest request) {
+        if (!request.password().equals(request.confirmPassword())) {
+            throw new IllegalArgumentException("Passwords do not match");
+        }
+        boolean created = authService.signup(request.username(), request.password());
+        if (!created) {
+            throw new ResponseStatusException(CONFLICT, "User already exists");
+        }
+        return new SignupResponse(request.username(), "Account created. You can now sign in.");
+    }
+
+    @PostMapping("/forgot-password")
+    public ForgotPasswordResponse forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+        if (!request.newPassword().equals(request.confirmPassword())) {
+            throw new IllegalArgumentException("Passwords do not match");
+        }
+        boolean updated = authService.resetPassword(request.username(), request.newPassword());
+        if (!updated) {
+            throw new ResponseStatusException(NOT_FOUND, "User not found");
+        }
+        return new ForgotPasswordResponse(request.username(), "Password updated. Please sign in.");
     }
 
     @GetMapping("/me")
@@ -51,6 +77,22 @@ public class AuthController {
     public record LoginRequest(@NotBlank String username, @NotBlank String password) {}
 
     public record LoginResponse(String token, String username, Instant expiresAt) {}
+
+    public record SignupRequest(
+            @NotBlank String username,
+            @NotBlank String password,
+            @NotBlank String confirmPassword
+    ) {}
+
+    public record ForgotPasswordRequest(
+            @NotBlank String username,
+            @NotBlank String newPassword,
+            @NotBlank String confirmPassword
+    ) {}
+
+    public record SignupResponse(String username, String message) {}
+
+    public record ForgotPasswordResponse(String username, String message) {}
 
     public record UserResponse(String username) {}
 }
